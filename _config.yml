@@ -1,0 +1,29 @@
+# Site settings
+title: robot.wtf
+description: blog about robots, wtf
+url: "https://robot.wtf"
+baseurl: ""
+
+# Author settings
+author:
+  name: Schuyler Erle
+
+# Build settings
+markdown: kramdown
+theme: minima
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+# GitHub Pages settings
+domain: robot.wtf
+
+# Exclude from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
