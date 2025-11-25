@@ -1,6 +1,5 @@
 ---
 layout: home
-title: Home
+title: robot.wtf
+subtitle: blog about robots, wtf
 ---
-
-Welcome to robot.wtf - a blog about robots, wtf.

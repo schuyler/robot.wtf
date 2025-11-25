@@ -5,15 +5,24 @@ url: "https://robot.wtf"
 baseurl: ""
 
 # Author settings
-author:
-  name: Schuyler Erle
+author: Schuyler Erle
+
+# Beautiful Jekyll theme settings
+navbar-links:
+  About: "about"
+
+# Avatar / profile picture
+# avatar: "/assets/img/avatar.jpg"
 
 # Build settings
 markdown: kramdown
-theme: minima
+remote_theme: daattali/beautiful-jekyll@6.0.1
 plugins:
   - jekyll-feed
   - jekyll-seo-tag
+  - jekyll-paginate
+  - jekyll-sitemap
+  - jekyll-remote-theme
 
 # GitHub Pages settings
 domain: robot.wtf
