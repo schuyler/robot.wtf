@@ -120,6 +120,7 @@
     group: robot
     mode: "0600"
     force: false
+  notify: restart robot services
 
 - name: Template settings.cfg (skip if already exists)
   ansible.builtin.template:
@@ -129,6 +130,7 @@
     group: robot
     mode: "0600"
     force: false
+  notify: restart robot services
 
 - name: Remove systemd drop-in override dirs if present
   ansible.builtin.file:
