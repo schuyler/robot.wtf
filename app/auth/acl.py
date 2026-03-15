@@ -27,7 +27,11 @@ class AclEnforcer:
     def check_access(
         self, user_did: str, wiki_slug: str
     ) -> dict[str, Any]:
-        """Check whether a user has access to a wiki via ACL.
+        """Check whether a user has access to a wiki via ACL or owner_did.
+
+        Checks in order:
+        1. ACL table entry (grantee_did match)
+        2. owner_did on the wiki itself (implicit owner role)
 
         Args:
             user_did: The user's DID (grantee_did in acls table).
@@ -37,15 +41,21 @@ class AclEnforcer:
             Dict with 'role' and 'permissions' keys.
 
         Raises:
-            AuthError: If no ACL entry grants the user access.
+            AuthError: If no ACL entry or owner_did grants the user access.
         """
         acl = self._acls.get(wiki_slug, user_did)
-        if not acl:
-            raise AuthError("Access denied", status=403)
+        if acl:
+            role = acl["role"]
+            permissions = permissions_for_role(role)
+            return {"role": role, "permissions": permissions}
 
-        role = acl["role"]
-        permissions = permissions_for_role(role)
-        return {"role": role, "permissions": permissions}
+        # Fall back to implicit owner access via owner_did
+        wiki = self._wikis.get(wiki_slug)
+        if wiki and wiki.get("owner_did") == user_did:
+            permissions = permissions_for_role("owner")
+            return {"role": "owner", "permissions": permissions}
+
+        raise AuthError("Access denied", status=403)
 
     def check_public_access(self, wiki_slug: str) -> dict[str, Any]:
         """Check whether a wiki is publicly accessible.

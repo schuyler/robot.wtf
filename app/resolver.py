@@ -244,7 +244,13 @@ class TenantResolver:
         if cookie_header:
             authed_user = self._auth.authenticate_from_cookie(cookie_header)
             if authed_user:
-                access = self._acl.check_access(authed_user.user_did, wiki_slug)
+                try:
+                    access = self._acl.check_access(authed_user.user_did, wiki_slug)
+                except AuthError as e:
+                    if e.status != 403:
+                        raise
+                    # No explicit ACL entry — fall back to public access if allowed
+                    access = self._acl.check_public_access(wiki_slug)
                 proxy_headers = build_proxy_headers(
                     email=f"{authed_user.handle}@robot.wtf",
                     name=authed_user.display_name or authed_user.handle,
