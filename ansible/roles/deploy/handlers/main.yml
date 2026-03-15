@@ -7,8 +7,4 @@
   ansible.builtin.systemd:
     name: "{{ item }}"
     state: restarted
-  loop:
-    - robot-otterwiki
-    - robot-api
-    - robot-auth
-    - robot-mcp
+  loop: "{{ robot_services }}"

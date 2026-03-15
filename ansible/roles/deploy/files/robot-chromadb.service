@@ -1,0 +1,21 @@
+[Unit]
+Description=robot.wtf ChromaDB server
+Before=robot-otterwiki.service
+After=network.target
+
+[Service]
+Type=simple
+User=robot
+Group=robot
+ExecStart=/srv/app/venv/bin/chroma run \
+    --host 127.0.0.1 \
+    --port 8004 \
+    --path /srv/data/chroma
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-chromadb
+
+[Install]
+WantedBy=multi-user.target
