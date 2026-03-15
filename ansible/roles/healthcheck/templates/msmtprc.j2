@@ -1,0 +1,9 @@
+account default
+host smtp.gmail.com
+port 587
+tls on
+tls_starttls on
+auth on
+user {{ smtp_user }}
+password {{ smtp_password }}
+from {{ smtp_user }}

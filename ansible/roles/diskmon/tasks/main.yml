@@ -1,0 +1,16 @@
+---
+- name: Install disk monitor script
+  ansible.builtin.template:
+    src: diskmon.sh.j2
+    dest: /usr/local/bin/robot-diskmon.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install disk monitor cron job
+  ansible.builtin.template:
+    src: diskmon.cron.j2
+    dest: /etc/cron.d/robot-diskmon
+    owner: root
+    group: root
+    mode: "0644"

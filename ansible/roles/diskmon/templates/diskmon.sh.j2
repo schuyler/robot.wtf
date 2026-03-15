@@ -1,0 +1,27 @@
+#!/bin/bash
+# robot.wtf disk space monitor with email alerts via msmtp.
+# Requires msmtp to be configured (installed by the healthcheck role).
+
+set -uo pipefail
+
+ALERT_EMAIL="{{ alert_email }}"
+HOSTNAME="$(hostname -f)"
+WARN_PCT={{ diskmon_warn_pct }}
+CRIT_PCT={{ diskmon_crit_pct }}
+ALERTS=""
+
+{% for mp in diskmon_mount_points %}
+usage=$(df --output=pcent "{{ mp }}" 2>/dev/null | tail -1 | tr -d ' %')
+if [ -n "$usage" ]; then
+    if [ "$usage" -ge "$CRIT_PCT" ]; then
+        ALERTS="${ALERTS}CRITICAL: {{ mp }} at ${usage}%\n"
+    elif [ "$usage" -ge "$WARN_PCT" ]; then
+        ALERTS="${ALERTS}WARNING: {{ mp }} at ${usage}%\n"
+    fi
+fi
+{% endfor %}
+
+if [ -n "$ALERTS" ]; then
+    printf "Subject: [robot.wtf] Disk space alert on %s\n\n%b" \
+        "$HOSTNAME" "$ALERTS" | msmtp "$ALERT_EMAIL"
+fi

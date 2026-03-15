@@ -1,0 +1,9 @@
+---
+- name: V7 Operational Hardening
+  hosts: robot-wtf
+  become: true
+  roles:
+    - logging
+    - healthcheck
+    - diskmon
+    - backup

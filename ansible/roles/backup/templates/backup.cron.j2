@@ -1,0 +1,5 @@
+# robot.wtf SQLite backup - every 4 hours
+BACKUP_DIR={{ backup_dir }}
+RETENTION_DAYS={{ backup_retention_days }}
+
+0 */4 * * * root /usr/local/bin/robot-backup.sh

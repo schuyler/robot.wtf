@@ -1,0 +1,17 @@
+---
+- name: Create journald config drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure journald limits
+  ansible.builtin.copy:
+    src: robot-journald.conf
+    dest: /etc/systemd/journald.conf.d/robot.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart systemd-journald

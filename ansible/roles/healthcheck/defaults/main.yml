@@ -1,0 +1,15 @@
+---
+# Email address to receive alerts (REQUIRED - set in group_vars or --extra-vars)
+alert_email: "SET_ME@example.com"
+
+# SMTP credentials for Gmail relay (REQUIRED - set in group_vars or --extra-vars)
+smtp_user: "SET_ME@gmail.com"
+smtp_password: "SET_ME"
+
+# Services to monitor: name -> port
+healthcheck_services:
+  robot-chromadb: 8004
+  robot-otterwiki: 8000
+  robot-api: 8002
+  robot-auth: 8003
+  robot-mcp: 8001

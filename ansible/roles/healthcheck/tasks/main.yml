@@ -1,0 +1,29 @@
+---
+- name: Install msmtp
+  ansible.builtin.apt:
+    name: msmtp
+    state: present
+
+- name: Configure msmtp for Gmail relay
+  ansible.builtin.template:
+    src: msmtprc.j2
+    dest: /etc/msmtprc
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install healthcheck script
+  ansible.builtin.copy:
+    src: healthcheck.sh
+    dest: /usr/local/bin/robot-healthcheck.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install healthcheck cron job
+  ansible.builtin.template:
+    src: healthcheck.cron.j2
+    dest: /etc/cron.d/robot-healthcheck
+    owner: root
+    group: root
+    mode: "0644"

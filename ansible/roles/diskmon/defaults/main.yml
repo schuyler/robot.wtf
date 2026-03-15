@@ -1,0 +1,6 @@
+---
+diskmon_warn_pct: 80
+diskmon_crit_pct: 90
+diskmon_mount_points:
+  - "/"
+  - "/srv"

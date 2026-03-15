@@ -1,0 +1,4 @@
+# robot.wtf service health check - every minute
+ALERT_EMAIL={{ alert_email }}
+
+* * * * * root /usr/local/bin/robot-healthcheck.sh

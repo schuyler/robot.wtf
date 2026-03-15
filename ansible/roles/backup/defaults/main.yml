@@ -1,0 +1,3 @@
+---
+backup_dir: /srv/backups
+backup_retention_days: 7
