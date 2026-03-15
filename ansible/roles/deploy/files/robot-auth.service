@@ -11,7 +11,7 @@ WorkingDirectory=/srv/app/src
 ExecStart=/srv/app/venv/bin/gunicorn \
     -c app/gunicorn.conf.py \
     app.auth_server:application
-EnvironmentFile=/srv/data/auth.env
+EnvironmentFile=/srv/data/robot.env
 Environment=PLATFORM_DOMAIN=robot.wtf
 Environment=SIGNING_KEY_PATH=/srv/data/signing_key.pem
 Environment=CLIENT_JWK_PATH=/srv/data/client_jwk.json
