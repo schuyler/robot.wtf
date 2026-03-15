@@ -69,6 +69,19 @@ def _require_login(app):
     return user
 
 
+def _is_owner(wiki, acl, user_did):
+    """Return True if user_did is the wiki owner.
+
+    Checks wiki.owner_did first (canonical), then falls back to an
+    explicit ACL row with role='owner' for backwards compatibility.
+    """
+    if wiki and wiki.get("owner_did") == user_did:
+        return True
+    if acl and acl.get("role") == "owner":
+        return True
+    return False
+
+
 def _create_flask_app() -> Flask:
     """Create the inner Flask app for non-API routes and management UI."""
     template_dir = os.path.join(
@@ -271,7 +284,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -298,7 +311,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -331,7 +344,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -377,7 +390,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -413,7 +426,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -478,7 +491,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -507,7 +520,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -538,7 +551,7 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         acl = acl_model.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
+        if not _is_owner(wiki, acl, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
