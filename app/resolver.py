@@ -236,8 +236,18 @@ class TenantResolver:
             token = parts[1]
             if _is_jwt(token):
                 return self._resolve_jwt(token, wiki_slug)
-            else:
-                return self._resolve_bearer_token(token)
+
+            # Internal API key bypass (MCP sidecar → REST API on localhost)
+            api_key = os.environ.get("OTTERWIKI_API_KEY", "")
+            if api_key and token == api_key:
+                proxy_headers = build_proxy_headers(
+                    email="@system",
+                    name="MCP",
+                    permissions=("READ", "WRITE", "UPLOAD", "ADMIN"),
+                )
+                return {"proxy_headers": proxy_headers}
+
+            return self._resolve_bearer_token(token)
 
         # Try cookie auth
         cookie_header = environ.get("HTTP_COOKIE")
