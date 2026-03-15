@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Dashboard</h2>
+
+{% if wikis %}
+  {% for wiki in wikis %}
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <h5 class="card-title mb-1">{{ wiki.display_name }}</h5>
+          <p class="text-muted mb-2">
+            <a href="https://{{ wiki.slug }}.{{ platform_domain }}">{{ wiki.slug }}.{{ platform_domain }}</a>
+          </p>
+          <div class="d-flex gap-3 text-muted small">
+            <span>{{ wiki.page_count or 0 }} pages</span>
+            <span>{{ "Public" if wiki.is_public else "Private" }}</span>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <a href="/app/wiki/{{ wiki.slug }}/mcp" class="btn btn-sm btn-primary">MCP Setup</a>
+          <a href="/app/wiki/{{ wiki.slug }}" class="btn btn-sm btn-outline-secondary">Settings</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="card">
+    <div class="card-body text-center py-5">
+      <h4>Create your wiki</h4>
+      <p class="text-muted">Get a wiki at <code>yourname.robot.wtf</code> in seconds.</p>
+      <a href="/app/create" class="btn btn-primary">Create wiki</a>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
