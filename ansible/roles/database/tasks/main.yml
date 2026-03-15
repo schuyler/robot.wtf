@@ -5,12 +5,16 @@
     dest: /tmp/robot_schema.sql
     mode: "0644"
 
-- name: Initialize SQLite database
+- name: Create SQLite database if missing
   ansible.builtin.shell: |
-    sqlite3 /srv/data/robot.db < /tmp/robot_schema.sql
     sqlite3 /srv/data/robot.db "PRAGMA journal_mode=WAL;"
   args:
     creates: /srv/data/robot.db
+
+- name: Apply schema migrations
+  ansible.builtin.shell: |
+    sqlite3 /srv/data/robot.db < /tmp/robot_schema.sql
+  changed_when: false
 
 - name: Set database file ownership
   ansible.builtin.shell: chown robot:robot /srv/data/robot.db*
