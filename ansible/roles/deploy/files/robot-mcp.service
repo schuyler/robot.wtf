@@ -1,0 +1,24 @@
+[Unit]
+Description=robot.wtf MCP Sidecar (uvicorn)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=robot
+Group=robot
+WorkingDirectory=/srv/app/src
+ExecStart=/srv/app/venv/bin/uvicorn \
+    app.mcp_entry:app \
+    --host 0.0.0.0 \
+    --port 8001
+Environment=PLATFORM_DOMAIN=robot.wtf
+Environment=MCP_PORT=8001
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-mcp
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+[Unit]
+Description=robot.wtf Otterwiki (Gunicorn)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+User=robot
+Group=robot
+WorkingDirectory=/srv/app/src
+ExecStart=/srv/app/venv/bin/gunicorn \
+    -c app/gunicorn.conf.py \
+    app.wsgi:application
+Environment=MULTI_TENANT=true
+Environment=ROBOT_DB_PATH=/srv/data/robot.db
+Environment=SIGNING_KEY_PATH=/srv/data/signing_key.pem
+Environment=PLATFORM_DOMAIN=robot.wtf
+Environment=WIKI_BASE=/srv/data/wikis
+Environment=GUNICORN_BIND=0.0.0.0:8000
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-otterwiki
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,92 @@
+---
+# Deploy robot.wtf application code and services
+
+- name: Create application source directory
+  ansible.builtin.file:
+    path: /srv/app/src
+    state: directory
+    owner: robot
+    group: robot
+    mode: "0755"
+
+- name: Sync application code to VPS
+  ansible.builtin.synchronize:
+    src: "{{ playbook_dir }}/../app/"
+    dest: /srv/app/src/app/
+    delete: true
+    rsync_opts:
+      - "--exclude=__pycache__"
+      - "--exclude=*.pyc"
+  notify: restart robot services
+
+- name: Copy requirements.txt
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../requirements.txt"
+    dest: /srv/app/src/requirements.txt
+    owner: robot
+    group: robot
+    mode: "0644"
+  notify: restart robot services
+
+- name: Install Python dependencies into venv
+  ansible.builtin.pip:
+    requirements: /srv/app/src/requirements.txt
+    virtualenv: /srv/app/venv
+    virtualenv_python: python3
+  become: true
+  become_user: robot
+
+# TODO: Install otterwiki from the wikibot-io fork once the repo path is finalized.
+# The otterwiki package needs to be installed in the venv for the real WSGI entry
+# point to work. For now, the stub Flask app in wsgi.py handles requests.
+#
+# - name: Install otterwiki from fork
+#   ansible.builtin.pip:
+#     name: "git+https://github.com/schuyler/otterwiki.git@wikibot-io"
+#     virtualenv: /srv/app/venv
+#   become: true
+#   become_user: robot
+#
+# - name: Install otterwiki-api plugin
+#   ansible.builtin.pip:
+#     name: "git+https://github.com/schuyler/otterwiki-api.git"
+#     virtualenv: /srv/app/venv
+#   become: true
+#   become_user: robot
+
+- name: Copy systemd unit files
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - robot-otterwiki.service
+    - robot-api.service
+    - robot-auth.service
+    - robot-mcp.service
+  notify:
+    - reload systemd
+    - restart robot services
+
+- name: Enable all robot services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    daemon_reload: true
+  loop:
+    - robot-otterwiki
+    - robot-api
+    - robot-auth
+    - robot-mcp
+
+- name: Start all robot services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - robot-otterwiki
+    - robot-api
+    - robot-auth
+    - robot-mcp
