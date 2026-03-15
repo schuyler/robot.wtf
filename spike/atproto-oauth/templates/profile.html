@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block title %}Profile — robot.wtf ATProto Spike{% endblock %}
+
+{% block content %}
+<article>
+  <h3>Authenticated</h3>
+  <table>
+    <tr>
+      <th>DID</th>
+      <td><code>{{ did }}</code></td>
+    </tr>
+    <tr>
+      <th>Handle</th>
+      <td><code>{{ handle }}</code></td>
+    </tr>
+    {% if display_name %}
+    <tr>
+      <th>Display Name</th>
+      <td>{{ display_name }}</td>
+    </tr>
+    {% endif %}
+  </table>
+  <p><a href="/auth/logout" role="button" class="secondary">Logout</a></p>
+</article>
+{% endblock %}

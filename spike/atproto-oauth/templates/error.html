@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block title %}Error{% endblock %}
+
+{% block content %}
+<article>
+  <h2>Error {{ status_code }}</h2>
+  {% if err.description %}
+  <p><code>{{ err.description }}</code></p>
+  {% else %}
+  <p>Something went wrong.</p>
+  {% endif %}
+  <p><a href="/auth/login">Start Over</a></p>
+</article>
+{% endblock %}
