@@ -1,6 +1,6 @@
 #!/bin/bash
 # robot.wtf disk space monitor with email alerts via msmtp.
-# Requires msmtp to be configured (installed by the healthcheck role).
+# Alerts at most once per 24 hours per mount point.
 
 set -uo pipefail
 
@@ -8,20 +8,24 @@ ALERT_EMAIL="{{ alert_email }}"
 HOSTNAME="$(hostname -f)"
 WARN_PCT={{ diskmon_warn_pct }}
 CRIT_PCT={{ diskmon_crit_pct }}
-ALERTS=""
+STATE_DIR="/var/run/robot-diskmon"
+mkdir -p "$STATE_DIR"
 
 {% for mp in diskmon_mount_points %}
 usage=$(df --output=pcent "{{ mp }}" 2>/dev/null | tail -1 | tr -d ' %')
-if [ -n "$usage" ]; then
-    if [ "$usage" -ge "$CRIT_PCT" ]; then
-        ALERTS="${ALERTS}CRITICAL: {{ mp }} at ${usage}%\n"
-    elif [ "$usage" -ge "$WARN_PCT" ]; then
-        ALERTS="${ALERTS}WARNING: {{ mp }} at ${usage}%\n"
+state_file="$STATE_DIR/$(echo '{{ mp }}' | tr '/' '_')"
+
+if [ -n "$usage" ] && [ "$usage" -ge "$WARN_PCT" ]; then
+    # Only alert if no state file or state file older than 24 hours
+    if [ ! -f "$state_file" ] || [ "$(find "$state_file" -mmin +1440 2>/dev/null)" ]; then
+        level="WARNING"
+        [ "$usage" -ge "$CRIT_PCT" ] && level="CRITICAL"
+        printf "Subject: [robot.wtf] %s: {{ mp }} at %s%% on %s\n\n%s: {{ mp }} is at %s%% usage." \
+            "$level" "$usage" "$HOSTNAME" "$level" "$usage" | msmtp "$ALERT_EMAIL"
+        touch "$state_file"
     fi
+else
+    # Below threshold — clear state
+    rm -f "$state_file"
 fi
 {% endfor %}
-
-if [ -n "$ALERTS" ]; then
-    printf "Subject: [robot.wtf] Disk space alert on %s\n\n%b" \
-        "$HOSTNAME" "$ALERTS" | msmtp "$ALERT_EMAIL"
-fi
