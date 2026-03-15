@@ -1,6 +1,5 @@
 ---
 robot_services:
-  - robot-chromadb
   - robot-otterwiki
   - robot-api
   - robot-auth

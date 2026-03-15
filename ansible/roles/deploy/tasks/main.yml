@@ -57,6 +57,7 @@
   ansible.builtin.pip:
     name: "git+https://github.com/schuyler/otterwiki-semantic-search.git"
     virtualenv: /srv/app/venv
+    state: forcereinstall
   notify: restart robot services
 
 - name: Install otterwiki-mcp plugin
@@ -66,9 +67,9 @@
     state: forcereinstall
   notify: restart robot services
 
-- name: Install chromadb
+- name: Install faiss-cpu
   ansible.builtin.pip:
-    name: chromadb
+    name: faiss-cpu
     virtualenv: /srv/app/venv
   notify: restart robot services
 
@@ -88,13 +89,20 @@
     group: robot
     mode: "0750"
 
-- name: Create /srv/data/chroma directory
+- name: Create /srv/data/faiss directory
   ansible.builtin.file:
-    path: /srv/data/chroma
+    path: /srv/data/faiss
     state: directory
     owner: robot
     group: robot
     mode: "0750"
+
+- name: Stop and disable ChromaDB service if present
+  ansible.builtin.systemd:
+    name: robot-chromadb
+    state: stopped
+    enabled: false
+  failed_when: false
 
 - name: Template robot.env
   ansible.builtin.template:
