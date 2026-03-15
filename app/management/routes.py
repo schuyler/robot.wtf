@@ -107,6 +107,10 @@ class ManagementMiddleware:
         if not path.startswith("/api"):
             return self._app(environ, start_response)
 
+        # Internal endpoints bypass auth (e.g. Caddy on-demand TLS check)
+        if path.startswith("/api/internal/"):
+            return self._app(environ, start_response)
+
         method = environ.get("REQUEST_METHOD", "GET")
 
         # Auth callback is unauthenticated
