@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block title %}Account{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Account</h2>
+
+<!-- Account info -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Profile</h5>
+    <table class="table table-sm mb-0">
+      <tbody>
+        <tr>
+          <th style="width: 150px;">Username</th>
+          <td>{{ user_record.username or "Not set" }}</td>
+        </tr>
+        <tr>
+          <th>Bluesky handle</th>
+          <td>{{ user_record.handle }}</td>
+        </tr>
+        <tr>
+          <th>DID</th>
+          <td><code class="small">{{ user_record.did }}</code></td>
+        </tr>
+        <tr>
+          <th>Member since</th>
+          <td>{{ user_record.created_at[:10] if user_record.created_at else "Unknown" }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Danger zone -->
+<div class="card border-danger">
+  <div class="card-body">
+    <h5 class="card-title text-danger">Delete account</h5>
+    <p>This will delete your account and all associated wikis. This cannot be undone.</p>
+    <button type="button" class="btn btn-outline-danger" data-bs-toggle="collapse" data-bs-target="#delete-account-confirm">
+      Delete my account
+    </button>
+    <div class="collapse mt-3" id="delete-account-confirm">
+      <form method="POST" action="/app/account/delete">
+        <div class="mb-2">
+          <label class="form-label">Type <strong>{{ user_record.username or user_record.handle }}</strong> to confirm:</label>
+          <input type="text" class="form-control" name="confirm_username" required>
+        </div>
+        <button type="submit" class="btn btn-danger">Permanently delete my account</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "layout.html" %}
+{% block title %}{{ wiki.display_name }} &mdash; MCP Setup{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-4">
+  <h2 class="mb-0">{{ wiki.display_name }}</h2>
+  <a href="https://{{ wiki.slug }}.{{ platform_domain }}" class="ms-3 text-muted small">{{ wiki.slug }}.{{ platform_domain }}</a>
+</div>
+
+<!-- Navigation tabs -->
+<ul class="nav nav-tabs mb-4">
+  <li class="nav-item">
+    <a class="nav-link" href="/app/wiki/{{ wiki.slug }}">Settings</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="/app/wiki/{{ wiki.slug }}/collaborators">Collaborators</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link active" href="/app/wiki/{{ wiki.slug }}/mcp">MCP</a>
+  </li>
+</ul>
+
+<!-- Token display (shown once after creation or regeneration) -->
+{% if mcp_token %}
+<div class="alert alert-warning">
+  <h5 class="alert-heading">Your MCP bearer token</h5>
+  <p>Copy this token now. It will not be shown again.</p>
+  <div class="token-display mb-2" id="mcp-token">{{ mcp_token }}</div>
+  <button class="btn btn-sm btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mcp-token').textContent.trim())">
+    Copy token
+  </button>
+</div>
+{% endif %}
+
+<!-- MCP endpoint -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">MCP endpoint</h5>
+    <p class="text-muted">Your wiki's MCP server is available at:</p>
+    <pre class="code-block">https://{{ wiki.slug }}.{{ platform_domain }}/mcp</pre>
+  </div>
+</div>
+
+<!-- Claude Code -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Claude Code</h5>
+    <p>Run this command to add your wiki as an MCP server in Claude Code:</p>
+    <pre class="code-block">claude mcp add {{ wiki.slug }} https://{{ wiki.slug }}.{{ platform_domain }}/mcp --transport http --header "Authorization: Bearer TOKEN"</pre>
+    <p class="text-muted small">Replace <code>TOKEN</code> with your bearer token.</p>
+  </div>
+</div>
+
+<!-- Claude.ai -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Claude.ai</h5>
+    <p>Add the following URL in Claude.ai's MCP settings:</p>
+    <pre class="code-block">https://{{ wiki.slug }}.{{ platform_domain }}/mcp</pre>
+    <p class="text-muted small">OAuth handles authentication automatically &mdash; no bearer token needed.</p>
+  </div>
+</div>
+
+<!-- Token management -->
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Bearer token</h5>
+    <p class="text-muted">Regenerate your MCP bearer token. This will disconnect any existing MCP clients using the old token.</p>
+    <form method="POST" action="/app/wiki/{{ wiki.slug }}/mcp/regenerate">
+      <button type="submit" class="btn btn-outline-warning"
+              onclick="return confirm('This will disconnect existing MCP clients. Continue?')">
+        Regenerate token
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

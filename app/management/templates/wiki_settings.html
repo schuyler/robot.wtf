@@ -1,0 +1,86 @@
+{% extends "layout.html" %}
+{% block title %}{{ wiki.display_name }} &mdash; Settings{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-4">
+  <h2 class="mb-0">{{ wiki.display_name }}</h2>
+  <a href="https://{{ wiki.slug }}.{{ platform_domain }}" class="ms-3 text-muted small">{{ wiki.slug }}.{{ platform_domain }}</a>
+</div>
+
+<!-- Navigation tabs -->
+<ul class="nav nav-tabs mb-4">
+  <li class="nav-item">
+    <a class="nav-link active" href="/app/wiki/{{ wiki.slug }}">Settings</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="/app/wiki/{{ wiki.slug }}/collaborators">Collaborators</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="/app/wiki/{{ wiki.slug }}/mcp">MCP</a>
+  </li>
+</ul>
+
+<!-- Display name -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Display name</h5>
+    <form method="POST" action="/app/wiki/{{ wiki.slug }}/settings">
+      <div class="d-flex gap-2">
+        <input type="text" class="form-control" name="display_name" value="{{ wiki.display_name }}" required>
+        <button type="submit" class="btn btn-outline-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Visibility -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Visibility</h5>
+    <form method="POST" action="/app/wiki/{{ wiki.slug }}/settings">
+      <input type="hidden" name="display_name" value="{{ wiki.display_name }}">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="is_public" name="is_public" value="1"
+               {{ "checked" if wiki.is_public else "" }}
+               onchange="this.form.submit()">
+        <label class="form-check-label" for="is_public">
+          {{ "Public" if wiki.is_public else "Private" }} &mdash;
+          {{ "Anyone can read this wiki" if wiki.is_public else "Only collaborators can access this wiki" }}
+        </label>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Otterwiki admin -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">Wiki admin panel</h5>
+    <p class="text-muted">Manage wiki content, search, and settings directly in Otterwiki.</p>
+    <a href="https://{{ wiki.slug }}.{{ platform_domain }}/-/admin" class="btn btn-outline-secondary" target="_blank">
+      Open admin panel
+    </a>
+  </div>
+</div>
+
+<!-- Danger zone -->
+<div class="card border-danger">
+  <div class="card-body">
+    <h5 class="card-title text-danger">Danger zone</h5>
+    <p>Deleting a wiki removes all pages, history, and collaborator access. This cannot be undone.</p>
+    <button type="button" class="btn btn-outline-danger" data-bs-toggle="collapse" data-bs-target="#delete-confirm">
+      Delete this wiki
+    </button>
+    <div class="collapse mt-3" id="delete-confirm">
+      <form method="POST" action="/app/wiki/{{ wiki.slug }}/delete">
+        <div class="mb-2">
+          <label class="form-label">Type <strong>{{ wiki.slug }}</strong> to confirm:</label>
+          <input type="text" class="form-control" name="confirm_slug" required
+                 pattern="{{ wiki.slug }}" title="Type the wiki slug to confirm deletion.">
+        </div>
+        <button type="submit" class="btn btn-danger">Permanently delete {{ wiki.slug }}</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
