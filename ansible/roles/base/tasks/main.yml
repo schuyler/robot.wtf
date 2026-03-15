@@ -15,6 +15,7 @@
       - sqlite3
       - libffi-dev
       - libssl-dev
+      - rsync
       - unattended-upgrades
       - apt-listchanges
     state: present

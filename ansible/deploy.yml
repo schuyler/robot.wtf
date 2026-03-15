@@ -1,0 +1,7 @@
+---
+- name: Deploy robot.wtf
+  hosts: robot-wtf
+  become: true
+
+  roles:
+    - deploy

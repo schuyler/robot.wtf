@@ -33,8 +33,14 @@
     requirements: /srv/app/src/requirements.txt
     virtualenv: /srv/app/venv
     virtualenv_python: python3
-  become: true
-  become_user: robot
+
+- name: Fix venv ownership after pip install
+  ansible.builtin.file:
+    path: /srv/app/venv
+    state: directory
+    owner: robot
+    group: robot
+    recurse: true
 
 # TODO: Install otterwiki from the wikibot-io fork once the repo path is finalized.
 # The otterwiki package needs to be installed in the venv for the real WSGI entry
