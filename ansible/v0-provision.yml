@@ -1,0 +1,10 @@
+---
+- name: V0 provision robot.wtf
+  hosts: robot-wtf
+  become: true
+
+  roles:
+    - base
+    - appdata
+    - crypto
+    - database

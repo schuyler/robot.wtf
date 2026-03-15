@@ -1,0 +1,40 @@
+---
+- name: Create system user robot
+  ansible.builtin.user:
+    name: robot
+    system: true
+    shell: /usr/sbin/nologin
+    home: /srv
+    create_home: false
+
+- name: Create /srv directory structure
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: robot
+    group: robot
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: /srv }
+    - { path: /srv/app }
+    - { path: /srv/wikis }
+    - { path: /srv/data, mode: "0700" }
+    - { path: /srv/static }
+    - { path: /srv/static/landing }
+    - { path: /srv/static/app }
+    - { path: /srv/embeddings }
+    - { path: /srv/embeddings/model }
+    - { path: /srv/backups }
+
+- name: Create Python venv
+  ansible.builtin.command:
+    cmd: python3 -m venv /srv/app/venv
+    creates: /srv/app/venv/bin/python
+
+- name: Set venv ownership
+  ansible.builtin.file:
+    path: /srv/app/venv
+    state: directory
+    owner: robot
+    group: robot
+    recurse: true

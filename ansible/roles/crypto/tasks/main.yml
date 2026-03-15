@@ -1,0 +1,67 @@
+---
+# RS256 signing keypair
+- name: Generate RS256 private key
+  ansible.builtin.command:
+    cmd: openssl genrsa -out /srv/data/signing_key.pem 2048
+    creates: /srv/data/signing_key.pem
+
+- name: Set signing key private permissions
+  ansible.builtin.file:
+    path: /srv/data/signing_key.pem
+    owner: robot
+    group: robot
+    mode: "0600"
+
+- name: Extract RS256 public key
+  ansible.builtin.command:
+    cmd: openssl rsa -in /srv/data/signing_key.pem -pubout -out /srv/data/signing_key.pub
+    creates: /srv/data/signing_key.pub
+
+- name: Set signing key public permissions
+  ansible.builtin.file:
+    path: /srv/data/signing_key.pub
+    owner: robot
+    group: robot
+    mode: "0644"
+
+# ATProto OAuth confidential client JWK
+- name: Install authlib in venv
+  ansible.builtin.pip:
+    name: authlib
+    virtualenv: /srv/app/venv
+
+- name: Generate ATProto client JWK pair
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/python3 -c "
+import json, secrets
+from authlib.jose import JsonWebKey
+
+key = JsonWebKey.generate_key('RSA', 2048, is_private=True)
+kid = secrets.token_urlsafe(8)
+
+priv = key.as_dict(is_private=True)
+priv.update({'kid': kid, 'use': 'sig', 'alg': 'RS256'})
+
+pub = key.as_dict(is_private=False)
+pub.update({'kid': kid, 'use': 'sig', 'alg': 'RS256'})
+
+with open('/srv/data/client_jwk.json', 'w') as f:
+    json.dump(priv, f, indent=2)
+with open('/srv/data/client_jwk_pub.json', 'w') as f:
+    json.dump(pub, f, indent=2)
+"
+    creates: /srv/data/client_jwk.json
+
+- name: Set client JWK private permissions
+  ansible.builtin.file:
+    path: /srv/data/client_jwk.json
+    owner: robot
+    group: robot
+    mode: "0600"
+
+- name: Set client JWK public permissions
+  ansible.builtin.file:
+    path: /srv/data/client_jwk_pub.json
+    owner: robot
+    group: robot
+    mode: "0644"

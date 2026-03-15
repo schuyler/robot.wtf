@@ -1,0 +1,34 @@
+---
+- name: Set timezone to UTC
+  ansible.builtin.command: timedatectl set-timezone UTC
+  changed_when: false
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-venv
+      - python3-pip
+      - python3-dev
+      - git
+      - build-essential
+      - sqlite3
+      - libffi-dev
+      - libssl-dev
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Verify Python 3.11+
+  ansible.builtin.command: python3 -c "import sys; assert sys.version_info >= (3, 11), f'Need 3.11+, got {sys.version}'"
+  changed_when: false
+
+- name: Enable unattended-upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    mode: "0644"

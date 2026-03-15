@@ -1,0 +1,19 @@
+---
+- name: Copy schema to target
+  ansible.builtin.copy:
+    src: schema.sql
+    dest: /tmp/robot_schema.sql
+    mode: "0644"
+
+- name: Initialize SQLite database
+  ansible.builtin.shell: |
+    sqlite3 /srv/data/robot.db < /tmp/robot_schema.sql
+    sqlite3 /srv/data/robot.db "PRAGMA journal_mode=WAL;"
+  args:
+    creates: /srv/data/robot.db
+  become_user: robot
+
+- name: Clean up schema file
+  ansible.builtin.file:
+    path: /tmp/robot_schema.sql
+    state: absent
