@@ -11,7 +11,16 @@
     sqlite3 /srv/data/robot.db "PRAGMA journal_mode=WAL;"
   args:
     creates: /srv/data/robot.db
-  become_user: robot
+
+- name: Set database file ownership
+  ansible.builtin.shell: chown robot:robot /srv/data/robot.db*
+  args:
+    removes: /srv/data/robot.db
+
+- name: Set database file permissions
+  ansible.builtin.file:
+    path: /srv/data/robot.db
+    mode: "0600"
 
 - name: Clean up schema file
   ansible.builtin.file:

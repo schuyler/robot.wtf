@@ -30,27 +30,21 @@
     name: authlib
     virtualenv: /srv/app/venv
 
+- name: Copy JWK generation script
+  ansible.builtin.copy:
+    src: generate_jwk.py
+    dest: /tmp/generate_jwk.py
+    mode: "0755"
+
 - name: Generate ATProto client JWK pair
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/python3 -c "
-import json, secrets
-from authlib.jose import JsonWebKey
-
-key = JsonWebKey.generate_key('RSA', 2048, is_private=True)
-kid = secrets.token_urlsafe(8)
-
-priv = key.as_dict(is_private=True)
-priv.update({'kid': kid, 'use': 'sig', 'alg': 'RS256'})
-
-pub = key.as_dict(is_private=False)
-pub.update({'kid': kid, 'use': 'sig', 'alg': 'RS256'})
-
-with open('/srv/data/client_jwk.json', 'w') as f:
-    json.dump(priv, f, indent=2)
-with open('/srv/data/client_jwk_pub.json', 'w') as f:
-    json.dump(pub, f, indent=2)
-"
+    cmd: /srv/app/venv/bin/python3 /tmp/generate_jwk.py
     creates: /srv/data/client_jwk.json
+
+- name: Clean up JWK generation script
+  ansible.builtin.file:
+    path: /tmp/generate_jwk.py
+    state: absent
 
 - name: Set client JWK private permissions
   ansible.builtin.file:
