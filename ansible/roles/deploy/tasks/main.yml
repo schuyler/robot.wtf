@@ -34,6 +34,36 @@
     virtualenv: /srv/app/venv
     virtualenv_python: python3
 
+- name: Install otterwiki from wikibot-io fork
+  ansible.builtin.pip:
+    name: "git+https://github.com/schuyler/otterwiki.git@wikibot-io"
+    virtualenv: /srv/app/venv
+  notify: restart robot services
+
+- name: Install otterwiki-api plugin
+  ansible.builtin.pip:
+    name: "git+https://github.com/schuyler/otterwiki-api.git"
+    virtualenv: /srv/app/venv
+  notify: restart robot services
+
+- name: Install otterwiki-semantic-search plugin
+  ansible.builtin.pip:
+    name: "git+https://github.com/schuyler/otterwiki-semantic-search.git"
+    virtualenv: /srv/app/venv
+  notify: restart robot services
+
+- name: Install otterwiki-mcp plugin
+  ansible.builtin.pip:
+    name: "git+https://github.com/schuyler/otterwiki-mcp.git"
+    virtualenv: /srv/app/venv
+  notify: restart robot services
+
+- name: Install chromadb
+  ansible.builtin.pip:
+    name: chromadb
+    virtualenv: /srv/app/venv
+  notify: restart robot services
+
 - name: Fix venv ownership after pip install
   ansible.builtin.file:
     path: /srv/app/venv
@@ -42,23 +72,72 @@
     group: robot
     recurse: true
 
-# TODO: Install otterwiki from the wikibot-io fork once the repo path is finalized.
-# The otterwiki package needs to be installed in the venv for the real WSGI entry
-# point to work. For now, the stub Flask app in wsgi.py handles requests.
-#
-# - name: Install otterwiki from fork
-#   ansible.builtin.pip:
-#     name: "git+https://github.com/schuyler/otterwiki.git@wikibot-io"
-#     virtualenv: /srv/app/venv
-#   become: true
-#   become_user: robot
-#
-# - name: Install otterwiki-api plugin
-#   ansible.builtin.pip:
-#     name: "git+https://github.com/schuyler/otterwiki-api.git"
-#     virtualenv: /srv/app/venv
-#   become: true
-#   become_user: robot
+- name: Generate otterwiki_secret_key if not set
+  ansible.builtin.shell:
+    cmd: python3 -c "import secrets; print(secrets.token_hex(32))"
+  register: _gen_secret_key
+  changed_when: false
+
+- name: Generate otterwiki_api_key if not set
+  ansible.builtin.shell:
+    cmd: python3 -c "import secrets; print(secrets.token_hex(32))"
+  register: _gen_api_key
+  changed_when: false
+
+- name: Generate mcp_auth_token if not set
+  ansible.builtin.shell:
+    cmd: python3 -c "import secrets; print(secrets.token_hex(32))"
+  register: _gen_mcp_token
+  changed_when: false
+
+- name: Set secret facts (use vars if provided, else generate)
+  ansible.builtin.set_fact:
+    otterwiki_secret_key: "{{ otterwiki_secret_key | default(_gen_secret_key.stdout) }}"
+    otterwiki_api_key: "{{ otterwiki_api_key | default(_gen_api_key.stdout) }}"
+    mcp_auth_token: "{{ mcp_auth_token | default(_gen_mcp_token.stdout) }}"
+
+- name: Create /srv/data directory
+  ansible.builtin.file:
+    path: /srv/data
+    state: directory
+    owner: robot
+    group: robot
+    mode: "0750"
+
+- name: Create /srv/data/chroma directory
+  ansible.builtin.file:
+    path: /srv/data/chroma
+    state: directory
+    owner: robot
+    group: robot
+    mode: "0750"
+
+- name: Template robot.env (skip if already exists)
+  ansible.builtin.template:
+    src: robot.env.j2
+    dest: /srv/data/robot.env
+    owner: robot
+    group: robot
+    mode: "0600"
+    force: false
+
+- name: Template settings.cfg (skip if already exists)
+  ansible.builtin.template:
+    src: settings.cfg.j2
+    dest: /srv/data/settings.cfg
+    owner: robot
+    group: robot
+    mode: "0600"
+    force: false
+
+- name: Remove systemd drop-in override dirs if present
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/robot-otterwiki.service.d
+    - /etc/systemd/system/robot-mcp.service.d
+  notify: reload systemd
 
 - name: Copy systemd unit files
   ansible.builtin.copy:

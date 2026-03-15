@@ -111,6 +111,10 @@ class ManagementMiddleware:
         if path.startswith("/api/internal/"):
             return self._app(environ, start_response)
 
+        # Otterwiki REST API plugin routes bypass management auth
+        if path.startswith("/api/v1/"):
+            return self._app(environ, start_response)
+
         method = environ.get("REQUEST_METHOD", "GET")
 
         # Auth callback is unauthenticated

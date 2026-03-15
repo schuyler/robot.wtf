@@ -1,6 +1,6 @@
 [Unit]
-Description=robot.wtf MCP Sidecar (uvicorn)
-After=network.target
+Description=robot.wtf MCP Sidecar
+After=network.target robot-otterwiki.service
 Wants=network.target
 
 [Service]
@@ -8,12 +8,8 @@ Type=simple
 User=robot
 Group=robot
 WorkingDirectory=/srv/app/src
-ExecStart=/srv/app/venv/bin/uvicorn \
-    app.mcp_entry:app \
-    --host 0.0.0.0 \
-    --port 8001
-Environment=PLATFORM_DOMAIN=robot.wtf
-Environment=MCP_PORT=8001
+EnvironmentFile=/srv/data/robot.env
+ExecStart=/srv/app/venv/bin/python -m otterwiki_mcp.server
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

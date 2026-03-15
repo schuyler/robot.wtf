@@ -8,6 +8,7 @@ Type=notify
 User=robot
 Group=robot
 WorkingDirectory=/srv/app/src
+EnvironmentFile=/srv/data/robot.env
 ExecStart=/srv/app/venv/bin/gunicorn \
     -c app/gunicorn.conf.py \
     app.wsgi:application
