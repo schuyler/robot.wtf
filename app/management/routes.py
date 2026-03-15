@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # --- Tier limits (free tier) ---
 MAX_WIKIS_PER_USER = 1
 MAX_PAGES_PER_WIKI = 500
-MAX_COLLABORATORS_PER_WIKI = 3
+# No collaborator limit for robot.wtf
 
 # Slug validation: lowercase alphanumeric + hyphens, 3-30 chars,
 # no leading/trailing hyphens
@@ -474,16 +474,6 @@ class ManagementMiddleware:
             return 403, {"error": "Only the owner can grant access"}
 
         # Check collaborator limit (count non-owner ACL entries)
-        existing_acls = self._acls.list_by_wiki(slug)
-        collaborator_count = sum(
-            1 for a in existing_acls
-            if a["role"] != "owner" and a["grantee_did"] != grantee_did
-        )
-        if collaborator_count >= MAX_COLLABORATORS_PER_WIKI:
-            return 403, {
-                "error": f"Collaborator limit reached ({MAX_COLLABORATORS_PER_WIKI} per wiki on free tier)"
-            }
-
         # Verify grantee exists
         grantee = self._users.get(grantee_did)
         if not grantee:

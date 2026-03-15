@@ -23,7 +23,6 @@ from app.auth.middleware import AuthenticatedUser, AuthMiddleware, AuthError
 from app.db import init_schema
 from app.management.routes import (
     ManagementMiddleware,
-    MAX_COLLABORATORS_PER_WIKI,
     MAX_WIKIS_PER_USER,
     validate_slug,
 )
@@ -481,40 +480,7 @@ class TestTierLimits:
         assert status == 403
         assert "limit" in body["error"].lower()
 
-    def test_collaborator_limit(
-        self, middleware, owner_user, user_model
-    ):
-        """Cannot add more than MAX_COLLABORATORS_PER_WIKI collaborators."""
-        _call_api(
-            middleware, "POST", "/api/wikis",
-            body={"slug": "collab-wiki", "display_name": "Collab Wiki"},
-        )
-        # Create collaborators up to the limit
-        for i in range(MAX_COLLABORATORS_PER_WIKI):
-            user_model.create(
-                did=f"did:plc:c{i}",
-                handle=f"c{i}.bsky.social",
-                display_name=f"Collab{i}",
-                username=f"collab{i}",
-            )
-            status, _ = _call_api(
-                middleware, "POST", "/api/wikis/collab-wiki/acl",
-                body={"grantee_did": f"did:plc:c{i}", "role": "editor"},
-            )
-            assert status == 201
-
-        # One more should fail
-        user_model.create(
-            did="did:plc:overflow",
-            handle="overflow.bsky.social",
-            display_name="Overflow",
-            username="overflow",
-        )
-        status, body = _call_api(
-            middleware, "POST", "/api/wikis/collab-wiki/acl",
-            body={"grantee_did": "did:plc:overflow", "role": "editor"},
-        )
-        assert status == 403
+    # No collaborator limit for robot.wtf
         assert "limit" in body["error"].lower()
 
     def test_page_limit_check(self, wiki_model, owner_user):
