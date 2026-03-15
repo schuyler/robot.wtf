@@ -29,7 +29,7 @@ STATIC_DIR = os.environ.get("ROBOT_STATIC_DIR", "/srv/static")
 
 def _create_flask_app() -> Flask:
     """Create the inner Flask app for non-API routes."""
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)
 
     @app.route("/api/internal/check-slug")
     def check_slug():
