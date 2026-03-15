@@ -1,0 +1,484 @@
+"""Management API -- WSGI middleware for wiki lifecycle operations.
+
+Intercepts ``/api/*`` requests before they reach the otterwiki Flask
+app. All other requests are passed through unmodified.
+
+Every management route requires a valid platform JWT in the
+Authorization header (except /api/auth/callback).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+from typing import Any, Callable
+
+from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
+from app.management.token import generate_mcp_token
+from app.models.acl import AclModel
+from app.models.user import RESERVED_USERNAMES, UserModel, validate_username
+from app.models.wiki import WikiModel
+
+logger = logging.getLogger(__name__)
+
+# Route patterns
+_USERNAME_ENDPOINT = re.compile(r"^/api/username$")
+_AUTH_CALLBACK = re.compile(r"^/api/auth/callback$")
+_WIKIS_COLLECTION = re.compile(r"^/api/wikis$")
+_WIKI_DETAIL = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)$")
+_WIKI_TOKEN = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)/token$")
+_WIKI_ACL_COLLECTION = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)/acl$")
+_WIKI_ACL_DETAIL = re.compile(
+    r"^/api/wikis/([a-zA-Z0-9_-]+)/acl/([^\s/]+)$"
+)
+
+# Base path for wiki repos
+WIKI_BASE = "/srv/data/wikis"
+
+
+def _init_wiki_repo(repo_path: str, display_name: str, purpose: str) -> None:
+    """Initialize a git repo and create a bootstrap Home page.
+
+    Args:
+        repo_path: Path where the git repo should be created.
+        display_name: Wiki display name for the Home page.
+        purpose: Description for the Home page.
+    """
+    os.makedirs(repo_path, exist_ok=True)
+    git = os.environ.get("GIT_PYTHON_GIT_EXECUTABLE", "git")
+
+    subprocess.run([git, "init", repo_path], check=True, capture_output=True)
+    subprocess.run(
+        [git, "-C", repo_path, "config", "user.email", "system@robot.wtf"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [git, "-C", repo_path, "config", "user.name", "robot.wtf"],
+        check=True, capture_output=True,
+    )
+
+    # Create Home.md
+    home_path = os.path.join(repo_path, "Home.md")
+    with open(home_path, "w") as f:
+        f.write(f"# {display_name}\n\n{purpose}\n")
+
+    subprocess.run(
+        [git, "-C", repo_path, "add", "Home.md"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [git, "-C", repo_path, "commit", "-m", "Initial commit"],
+        check=True, capture_output=True,
+    )
+
+
+def _delete_wiki_repo(wiki_dir: str) -> None:
+    """Remove a wiki directory from disk."""
+    if os.path.exists(wiki_dir):
+        shutil.rmtree(wiki_dir)
+
+
+class ManagementMiddleware:
+    """WSGI middleware that handles ``/api/*`` management routes."""
+
+    def __init__(
+        self,
+        app: Callable,
+        *,
+        auth_middleware: AuthMiddleware,
+        user_model: UserModel,
+        wiki_model: WikiModel,
+        acl_model: AclModel,
+        wiki_base: str | None = None,
+    ):
+        self._app = app
+        self._auth = auth_middleware
+        self._users = user_model
+        self._wikis = wiki_model
+        self._acls = acl_model
+        self._wiki_base = wiki_base or os.environ.get("WIKI_BASE", WIKI_BASE)
+
+    def __call__(self, environ: dict, start_response: Callable) -> Any:
+        path = environ.get("PATH_INFO", "")
+        if not path.startswith("/api"):
+            return self._app(environ, start_response)
+
+        method = environ.get("REQUEST_METHOD", "GET")
+
+        # Auth callback is unauthenticated
+        m = _AUTH_CALLBACK.match(path)
+        if m:
+            if method == "POST":
+                try:
+                    status, body = self._auth_callback(environ)
+                except AuthError as e:
+                    return _json_response(
+                        start_response, e.status, {"error": e.message}
+                    )
+                return _json_response(start_response, status, body)
+            return _json_response(
+                start_response, 405, {"error": "Method not allowed"}
+            )
+
+        authorization = environ.get("HTTP_AUTHORIZATION")
+
+        try:
+            user = self._auth.authenticate(authorization)
+        except AuthError as e:
+            return _json_response(
+                start_response, e.status, {"error": e.message}
+            )
+
+        try:
+            status, body = self._route(method, path, user, environ)
+        except AuthError as e:
+            return _json_response(
+                start_response, e.status, {"error": e.message}
+            )
+
+        return _json_response(start_response, status, body)
+
+    def _route(
+        self,
+        method: str,
+        path: str,
+        user: AuthenticatedUser,
+        environ: dict,
+    ) -> tuple[int, dict]:
+        """Dispatch to the correct handler based on method + path."""
+        m = _USERNAME_ENDPOINT.match(path)
+        if m:
+            if method == "POST":
+                return self._set_username(user, environ)
+            return 405, {"error": "Method not allowed"}
+
+        m = _WIKIS_COLLECTION.match(path)
+        if m:
+            if method == "POST":
+                return self._create_wiki(user, environ)
+            if method == "GET":
+                return self._list_wikis(user)
+            return 405, {"error": "Method not allowed"}
+
+        m = _WIKI_TOKEN.match(path)
+        if m:
+            slug = m.group(1)
+            if method == "POST":
+                return self._regenerate_token(user, slug)
+            return 405, {"error": "Method not allowed"}
+
+        m = _WIKI_ACL_DETAIL.match(path)
+        if m:
+            slug, grantee_did = m.group(1), m.group(2)
+            if method == "DELETE":
+                return self._revoke_acl(user, slug, grantee_did)
+            return 405, {"error": "Method not allowed"}
+
+        m = _WIKI_ACL_COLLECTION.match(path)
+        if m:
+            slug = m.group(1)
+            if method == "POST":
+                return self._grant_acl(user, slug, environ)
+            if method == "GET":
+                return self._list_acl(user, slug)
+            return 405, {"error": "Method not allowed"}
+
+        m = _WIKI_DETAIL.match(path)
+        if m:
+            slug = m.group(1)
+            if method == "GET":
+                return self._get_wiki(user, slug)
+            if method == "DELETE":
+                return self._delete_wiki(user, slug)
+            return 405, {"error": "Method not allowed"}
+
+        return 404, {"error": "Not found"}
+
+    # --- Username ---
+
+    def _set_username(
+        self, user: AuthenticatedUser, environ: dict
+    ) -> tuple[int, dict]:
+        """Set the authenticated user's username."""
+        body = _read_json_body(environ)
+        username = body.get("username", "").strip().lower()
+
+        valid, error = validate_username(username)
+        if not valid:
+            return 400, {"error": error}
+
+        existing = self._users.get_by_username(username)
+        if existing and existing["did"] != user.user_did:
+            return 409, {"error": "Username is already taken"}
+
+        try:
+            updated = self._users.set_username(user.user_did, username)
+        except ValueError as e:
+            error_msg = str(e)
+            if "taken" in error_msg.lower():
+                return 409, {"error": error_msg}
+            return 400, {"error": error_msg}
+
+        return 200, {
+            "username": updated.get("username"),
+            "user_did": updated.get("did"),
+        }
+
+    # --- Auth ---
+
+    def _auth_callback(self, environ: dict) -> tuple[int, dict]:
+        """Handle ATProto auth callback.
+
+        This is a placeholder -- the actual ATProto OAuth flow
+        will be implemented when the auth system is built.
+        """
+        body = _read_json_body(environ)
+        # TODO: implement ATProto OAuth callback
+        return 501, {"error": "ATProto auth callback not yet implemented"}
+
+    # --- Wiki CRUD ---
+
+    def _create_wiki(
+        self, user: AuthenticatedUser, environ: dict
+    ) -> tuple[int, dict]:
+        body = _read_json_body(environ)
+        slug = body.get("slug", "").strip()
+        display_name = body.get("display_name", "").strip()
+        wiki_purpose = body.get("purpose", "").strip()
+
+        if not slug:
+            return 400, {"error": "slug is required"}
+        if not display_name:
+            return 400, {"error": "display_name is required"}
+
+        # Generate MCP token
+        plaintext_token, token_hash = generate_mcp_token()
+
+        # Repo path
+        repo_path = os.path.join(self._wiki_base, slug, "repo")
+
+        # Create wiki record
+        try:
+            wiki = self._wikis.create(
+                slug=slug,
+                owner_did=user.user_did,
+                display_name=display_name,
+                repo_path=repo_path,
+                mcp_token_hash=token_hash,
+            )
+        except Exception as e:
+            logger.error("Failed to create wiki record: %s", e)
+            return 409, {"error": "Wiki already exists"}
+
+        # Create owner ACL
+        self._acls.create(
+            wiki_slug=slug,
+            grantee_did=user.user_did,
+            role="owner",
+            granted_by=user.user_did,
+        )
+
+        # Init git repo + bootstrap
+        try:
+            _init_wiki_repo(
+                repo_path, display_name, wiki_purpose or f"A wiki about {display_name}"
+            )
+        except Exception as e:
+            logger.error("Failed to init wiki repo: %s", e)
+            try:
+                self._wikis.delete(slug)
+                self._acls.delete(slug, user.user_did)
+            except Exception:
+                pass
+            return 500, {"error": "Failed to initialize wiki repository"}
+
+        # Increment wiki count
+        wiki_count = int(user.record.get("wiki_count", 0))
+        self._users.update(user.user_did, wiki_count=wiki_count + 1)
+
+        return 201, {
+            "wiki": wiki,
+            "mcp_token": plaintext_token,
+            "mcp_endpoint": f"https://{slug}.robot.wtf/mcp",
+        }
+
+    def _list_wikis(self, user: AuthenticatedUser) -> tuple[int, dict]:
+        wikis = self._wikis.list_by_owner(user.user_did)
+        return 200, {"wikis": wikis}
+
+    def _get_wiki(
+        self, user: AuthenticatedUser, slug: str
+    ) -> tuple[int, dict]:
+        wiki = self._wikis.get(slug)
+        if not wiki:
+            return 404, {"error": "Wiki not found"}
+
+        # Verify the user is the owner or has ACL access
+        if wiki["owner_did"] != user.user_did:
+            acl = self._acls.get(slug, user.user_did)
+            if not acl:
+                return 403, {"error": "Access denied"}
+
+        return 200, {
+            "wiki": wiki,
+            "mcp_endpoint": f"https://{slug}.robot.wtf/mcp",
+        }
+
+    def _delete_wiki(
+        self, user: AuthenticatedUser, slug: str
+    ) -> tuple[int, dict]:
+        # Verify ownership
+        acl = self._acls.get(slug, user.user_did)
+        if not acl or acl.get("role") != "owner":
+            return 403, {"error": "Only the owner can delete a wiki"}
+
+        wiki = self._wikis.get(slug)
+        if not wiki:
+            return 404, {"error": "Wiki not found"}
+
+        # Remove repo from disk
+        repo_path = wiki.get("repo_path", "")
+        if repo_path:
+            wiki_dir = os.path.dirname(repo_path)
+            _delete_wiki_repo(wiki_dir)
+
+        # Delete all ACLs for this wiki
+        acls = self._acls.list_by_wiki(slug)
+        for acl_entry in acls:
+            self._acls.delete(slug, acl_entry["grantee_did"])
+
+        # Delete wiki record
+        self._wikis.delete(slug)
+
+        # Decrement wiki count
+        wiki_count = int(user.record.get("wiki_count", 0))
+        new_count = max(0, wiki_count - 1)
+        self._users.update(user.user_did, wiki_count=new_count)
+
+        return 200, {"deleted": True}
+
+    # --- Token management ---
+
+    def _regenerate_token(
+        self, user: AuthenticatedUser, slug: str
+    ) -> tuple[int, dict]:
+        acl = self._acls.get(slug, user.user_did)
+        if not acl or acl.get("role") != "owner":
+            return 403, {"error": "Only the owner can regenerate the token"}
+
+        wiki = self._wikis.get(slug)
+        if not wiki:
+            return 404, {"error": "Wiki not found"}
+
+        plaintext_token, token_hash = generate_mcp_token()
+        self._wikis.update(slug, mcp_token_hash=token_hash)
+
+        return 200, {"mcp_token": plaintext_token}
+
+    # --- ACL management ---
+
+    def _grant_acl(
+        self, user: AuthenticatedUser, slug: str, environ: dict
+    ) -> tuple[int, dict]:
+        body = _read_json_body(environ)
+        grantee_did = body.get("grantee_did", "").strip()
+        role = body.get("role", "").strip()
+
+        if not grantee_did:
+            return 400, {"error": "grantee_did is required"}
+        if role not in ("editor", "viewer"):
+            return 400, {"error": "role must be editor or viewer"}
+
+        # Verify caller is owner
+        caller_acl = self._acls.get(slug, user.user_did)
+        if not caller_acl or caller_acl.get("role") != "owner":
+            return 403, {"error": "Only the owner can grant access"}
+
+        # Verify grantee exists
+        grantee = self._users.get(grantee_did)
+        if not grantee:
+            return 404, {"error": "User not found"}
+
+        acl_entry = self._acls.create(
+            wiki_slug=slug,
+            grantee_did=grantee_did,
+            role=role,
+            granted_by=user.user_did,
+        )
+
+        return 201, {"acl": acl_entry}
+
+    def _revoke_acl(
+        self, user: AuthenticatedUser, slug: str, grantee_did: str
+    ) -> tuple[int, dict]:
+        caller_acl = self._acls.get(slug, user.user_did)
+        if not caller_acl or caller_acl.get("role") != "owner":
+            return 403, {"error": "Only the owner can revoke access"}
+
+        if grantee_did == user.user_did:
+            return 400, {"error": "Cannot revoke owner access"}
+
+        self._acls.delete(slug, grantee_did)
+        return 200, {"revoked": True}
+
+    def _list_acl(
+        self, user: AuthenticatedUser, slug: str
+    ) -> tuple[int, dict]:
+        caller_acl = self._acls.get(slug, user.user_did)
+        if not caller_acl:
+            return 403, {"error": "Access denied"}
+
+        acls = self._acls.list_by_wiki(slug)
+        return 200, {"acls": acls}
+
+
+# --- Helpers ---
+
+
+def _read_json_body(environ: dict) -> dict:
+    """Read and parse JSON from the WSGI request body."""
+    try:
+        content_length = int(environ.get("CONTENT_LENGTH", 0))
+    except (ValueError, TypeError):
+        content_length = 0
+
+    if content_length == 0:
+        return {}
+
+    body = environ["wsgi.input"].read(content_length)
+    try:
+        return json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _json_response(
+    start_response: Callable, status_code: int, body: dict
+) -> list[bytes]:
+    """Build a JSON WSGI response."""
+    status_map = {
+        200: "200 OK",
+        201: "201 Created",
+        400: "400 Bad Request",
+        401: "401 Unauthorized",
+        403: "403 Forbidden",
+        404: "404 Not Found",
+        405: "405 Method Not Allowed",
+        409: "409 Conflict",
+        500: "500 Internal Server Error",
+        501: "501 Not Implemented",
+    }
+    status_str = status_map.get(status_code, f"{status_code} Error")
+    payload = json.dumps(body).encode("utf-8")
+    start_response(
+        status_str,
+        [
+            ("Content-Type", "application/json"),
+            ("Content-Length", str(len(payload))),
+        ],
+    )
+    return [payload]
