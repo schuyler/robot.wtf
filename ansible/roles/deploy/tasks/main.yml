@@ -79,29 +79,6 @@
     group: robot
     recurse: true
 
-- name: Read existing robot.env if present
-  ansible.builtin.shell:
-    cmd: "grep '^{{ item }}=' /srv/data/robot.env | cut -d= -f2-"
-  register: _existing_secrets
-  loop:
-    - OTTERWIKI_API_KEY
-    - MCP_AUTH_TOKEN
-  changed_when: false
-  failed_when: false
-
-- name: Read existing settings.cfg SECRET_KEY if present
-  ansible.builtin.shell:
-    cmd: "grep '^SECRET_KEY' /srv/data/settings.cfg | sed 's/.*\"\\(.*\\)\"/\\1/'"
-  register: _existing_secret_key
-  changed_when: false
-  failed_when: false
-
-- name: Set secrets (preserve existing, generate if missing)
-  ansible.builtin.set_fact:
-    otterwiki_api_key: "{{ _existing_secrets.results[0].stdout | default('', true) | ternary(_existing_secrets.results[0].stdout, lookup('pipe', 'python3 -c \"import secrets; print(secrets.token_hex(32))\"')) }}"
-    mcp_auth_token: "{{ _existing_secrets.results[1].stdout | default('', true) | ternary(_existing_secrets.results[1].stdout, lookup('pipe', 'python3 -c \"import secrets; print(secrets.token_hex(32))\"')) }}"
-    otterwiki_secret_key: "{{ _existing_secret_key.stdout | default('', true) | ternary(_existing_secret_key.stdout, lookup('pipe', 'python3 -c \"import secrets; print(secrets.token_hex(32))\"')) }}"
-
 - name: Create /srv/data directory
   ansible.builtin.file:
     path: /srv/data
@@ -127,14 +104,14 @@
     mode: "0600"
   notify: restart robot services
 
-- name: Template settings.cfg (skip if already exists)
+- name: Template settings.cfg
   ansible.builtin.template:
     src: settings.cfg.j2
     dest: /srv/data/settings.cfg
     owner: robot
     group: robot
     mode: "0600"
-    force: false
+    force: true
   notify: restart robot services
 
 - name: Remove systemd drop-in override dirs if present

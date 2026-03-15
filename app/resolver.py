@@ -175,7 +175,7 @@ class TenantResolver:
         if wiki_slug is None:
             # Non-tenant subdomain — pass through with anonymous headers
             environ["HTTP_X_OTTERWIKI_NAME"] = "Anonymous"
-            environ["HTTP_X_OTTERWIKI_EMAIL"] = "anonymous@robot.wtf"
+            environ["HTTP_X_OTTERWIKI_EMAIL"] = "@anonymous"
             environ["HTTP_X_OTTERWIKI_PERMISSIONS"] = "READ,WRITE,UPLOAD,ADMIN"
             return self._app(environ, start_response)
 
@@ -252,7 +252,7 @@ class TenantResolver:
                     # No explicit ACL entry — fall back to public access if allowed
                     access = self._acl.check_public_access(wiki_slug)
                 proxy_headers = build_proxy_headers(
-                    email=f"{authed_user.handle}@robot.wtf",
+                    email=f"@{authed_user.handle}",
                     name=authed_user.display_name or authed_user.handle,
                     permissions=access["permissions"],
                 )
@@ -269,7 +269,7 @@ class TenantResolver:
         access = self._acl.check_access(authed_user.user_did, wiki_slug)
 
         proxy_headers = build_proxy_headers(
-            email=f"{authed_user.handle}@robot.wtf",
+            email=f"@{authed_user.handle}",
             name=authed_user.display_name or authed_user.handle,
             permissions=access["permissions"],
         )
@@ -291,7 +291,7 @@ class TenantResolver:
         access = self._acl.check_public_access(wiki_slug)
 
         proxy_headers = build_proxy_headers(
-            email="anonymous@robot.wtf",
+            email="@anonymous",
             name="Anonymous",
             permissions=access["permissions"],
         )
