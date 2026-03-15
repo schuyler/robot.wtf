@@ -1,15 +1,18 @@
 """Auth service entry point (port 8003).
 
-Placeholder Flask app with stub routes for the ATProto OAuth flow.
-Real implementation comes in V3.
+Production ATProto OAuth flow for robot.wtf. Runs behind Caddy at
+https://robot.wtf/auth/*.
 
 Routes:
-- /auth/login — initiate ATProto OAuth
-- /auth/callback — handle OAuth callback
-- /auth/logout — clear session
-- /auth/client-metadata.json — OAuth client metadata
-- /.well-known/oauth-authorization-server — AS metadata stub
-- /.well-known/jwks.json — public key set stub
+- GET  /auth/client-metadata.json — ATProto OAuth client metadata
+- GET  /auth/login — login page
+- POST /auth/login — initiate OAuth flow
+- GET  /auth/callback — OAuth callback -> platform JWT cookie
+- GET  /auth/logout — clear cookie
+- GET  /auth/signup — username form (first-time users)
+- POST /auth/signup — create user record
+- GET  /.well-known/oauth-authorization-server — AS metadata stub
+- GET  /.well-known/jwks.json — RS256 public key
 """
 
 from __future__ import annotations
@@ -17,70 +20,567 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import sqlite3
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
-from flask import Flask, jsonify, request
+from authlib.jose import JsonWebKey
+from flask import (
+    Flask,
+    flash,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    session,
+    abort,
+    g,
+)
+
+from app.auth.atproto_identity import (
+    is_valid_did,
+    is_valid_handle,
+    resolve_identity,
+    pds_endpoint,
+)
+from app.auth.atproto_oauth import (
+    resolve_pds_authserver,
+    initial_token_request,
+    send_par_auth_request,
+    fetch_authserver_meta,
+    revoke_token_request,
+)
+from app.auth.atproto_security import is_safe_url
+from app.auth.jwt import PlatformJWT, _load_keys
+from app.db import get_connection, init_schema
+from app.models.user import UserModel, validate_username
 
 logger = logging.getLogger(__name__)
 
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
+COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", f".{PLATFORM_DOMAIN}")
+COOKIE_NAME = "platform_token"
+COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours
+
+# Identity-only scope — we just need to prove the user owns a DID
+OAUTH_SCOPE = "atproto"
+
+# Fixed client_id — the URL where client metadata is served
+CLIENT_ID = f"https://{PLATFORM_DOMAIN}/auth/client-metadata.json"
+REDIRECT_URI = f"https://{PLATFORM_DOMAIN}/auth/callback"
 
 
-def create_app() -> Flask:
-    """Create the auth service Flask app."""
-    app = Flask(__name__)
+def _load_client_jwk():
+    """Load the ATProto client JWK (EC P-256) from file."""
+    jwk_path = os.environ.get("CLIENT_JWK_PATH", "/srv/data/client_jwk.json")
+    with open(jwk_path) as f:
+        secret_jwk = JsonWebKey.import_key(json.load(f))
+    pub_jwk = json.loads(secret_jwk.as_json(is_private=False))
+    assert "d" not in pub_jwk, "Public key must not contain private material"
+    return secret_jwk, pub_jwk
 
-    @app.route("/auth/login")
-    def auth_login():
-        """Initiate ATProto OAuth login."""
-        return jsonify({"error": "ATProto OAuth not yet implemented"}), 501
 
-    @app.route("/auth/callback")
-    def auth_callback():
-        """Handle ATProto OAuth callback."""
-        return jsonify({"error": "ATProto OAuth not yet implemented"}), 501
+def _get_db():
+    """Get or create a DB connection for this request."""
+    db = getattr(g, "_database", None)
+    if db is None:
+        db = g._database = get_connection()
+    return db
 
-    @app.route("/auth/logout", methods=["GET", "POST"])
-    def auth_logout():
-        """Clear session / logout."""
-        return jsonify({"error": "ATProto OAuth not yet implemented"}), 501
+
+def _get_user_model():
+    """Get a UserModel for the current request."""
+    return UserModel(_get_db())
+
+
+def _fetch_display_name(did: str) -> str | None:
+    """Best-effort fetch of display name from Bluesky public API."""
+    try:
+        import requests
+        resp = requests.get(
+            "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile",
+            params={"actor": did},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("displayName")
+    except Exception as e:
+        logger.debug("Failed to fetch display name for %s: %s", did, e)
+    return None
+
+
+def _default_username_from_handle(handle: str) -> str:
+    """Derive a default username from a Bluesky handle.
+
+    Takes the first segment (before the first dot), lowercases it,
+    strips non-alphanumeric/hyphen chars.
+    """
+    prefix = handle.split(".")[0].lower()
+    # Keep only lowercase alphanumeric and hyphens
+    prefix = re.sub(r"[^a-z0-9-]", "", prefix)
+    # Strip leading/trailing hyphens
+    prefix = prefix.strip("-")
+    # Ensure minimum length
+    if len(prefix) < 3:
+        prefix = prefix + "user"
+    # Truncate to 30 chars
+    return prefix[:30]
+
+
+def create_app(
+    *,
+    db_path: str | None = None,
+    client_jwk_path: str | None = None,
+    signing_key_path: str | None = None,
+) -> Flask:
+    """Create the auth service Flask app.
+
+    Args:
+        db_path: Override DB path (for testing).
+        client_jwk_path: Override client JWK path (for testing).
+        signing_key_path: Override signing key path (for testing).
+    """
+    app = Flask(__name__, template_folder="auth/templates")
+
+    # Secret key for Flask session (used for flash messages only)
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
+
+    # Override env vars if provided (for testing)
+    if client_jwk_path:
+        os.environ["CLIENT_JWK_PATH"] = client_jwk_path
+    if signing_key_path:
+        os.environ["SIGNING_KEY_PATH"] = signing_key_path
+    if db_path:
+        os.environ["ROBOT_DB_PATH"] = db_path
+
+    # Load keys at startup
+    client_secret_jwk, client_pub_jwk = _load_client_jwk()
+    private_key, public_key = _load_keys()
+    platform_jwt = PlatformJWT(private_key, public_key)
+
+    # Derive JWKS from public key for the /.well-known/jwks.json endpoint
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
+    import base64
+
+    pub_key_obj = load_pem_public_key(public_key.encode())
+    pub_numbers = pub_key_obj.public_numbers()
+
+    def _int_to_b64url(n: int, length: int | None = None) -> str:
+        byte_len = length or ((n.bit_length() + 7) // 8)
+        return base64.urlsafe_b64encode(
+            n.to_bytes(byte_len, "big")
+        ).rstrip(b"=").decode()
+
+    rs256_jwk = {
+        "kty": "RSA",
+        "use": "sig",
+        "alg": "RS256",
+        "n": _int_to_b64url(pub_numbers.n),
+        "e": _int_to_b64url(pub_numbers.e),
+    }
+
+    # --- Request lifecycle ---
+
+    @app.teardown_appcontext
+    def close_connection(exception):
+        db = getattr(g, "_database", None)
+        if db is not None:
+            db.close()
+
+    # --- Routes ---
 
     @app.route("/auth/client-metadata.json")
-    def client_metadata():
-        """OAuth client metadata document."""
-        metadata = {
-            "client_id": f"https://auth.{PLATFORM_DOMAIN}/auth/client-metadata.json",
-            "client_name": "robot.wtf",
-            "client_uri": f"https://{PLATFORM_DOMAIN}",
-            "redirect_uris": [f"https://auth.{PLATFORM_DOMAIN}/auth/callback"],
+    def oauth_client_metadata():
+        """Serve ATProto OAuth client metadata (the client_id URL points here)."""
+        return jsonify({
+            "client_id": CLIENT_ID,
+            "dpop_bound_access_tokens": True,
+            "application_type": "web",
+            "redirect_uris": [REDIRECT_URI],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
-            "token_endpoint_auth_method": "none",
-            "scope": "atproto",
-            "dpop_bound_access_tokens": True,
-        }
-        return jsonify(metadata)
+            "scope": OAUTH_SCOPE,
+            "token_endpoint_auth_method": "private_key_jwt",
+            "token_endpoint_auth_signing_alg": "ES256",
+            "jwks": {
+                "keys": [client_pub_jwk],
+            },
+            "client_name": "robot.wtf",
+            "client_uri": f"https://{PLATFORM_DOMAIN}",
+        })
+
+    @app.route("/auth/login", methods=("GET", "POST"))
+    def oauth_login():
+        """Login page (GET) or initiate OAuth flow (POST)."""
+        if request.method != "POST":
+            return render_template("login.html")
+
+        username = request.form.get("username", "").strip()
+
+        # Strip unicode control chars
+        username = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", username)
+
+        # Strip @ prefix
+        if is_valid_handle(username.removeprefix("@")):
+            username = username.removeprefix("@")
+
+        if is_valid_handle(username) or is_valid_did(username):
+            login_hint = username
+
+            try:
+                did, handle, did_doc = resolve_identity(username)
+            except Exception as e:
+                flash(f"Failed to resolve identity: {e}", "error")
+                return render_template("login.html"), 400
+
+            pds_url = pds_endpoint(did_doc)
+            logger.info("account PDS: %s", pds_url)
+            authserver_url = resolve_pds_authserver(pds_url)
+        elif username.startswith("https://") and is_safe_url(username):
+            did, handle, pds_url = None, None, None
+            login_hint = None
+            initial_url = username
+            try:
+                authserver_url = resolve_pds_authserver(initial_url)
+            except Exception:
+                authserver_url = initial_url.rstrip("/")
+        else:
+            flash("Not a valid handle, DID, or auth server URL", "error")
+            return render_template("login.html"), 400
+
+        logger.info("account Authorization Server: %s", authserver_url)
+        if not is_safe_url(authserver_url):
+            flash("Invalid authorization server URL", "error")
+            return render_template("login.html"), 400
+
+        try:
+            authserver_meta = fetch_authserver_meta(authserver_url)
+        except Exception as err:
+            logger.warning("failed to fetch auth server metadata: %s", err)
+            flash("Failed to fetch Auth Server OAuth metadata", "error")
+            return render_template("login.html"), 400
+
+        # Generate DPoP private signing key for this session
+        dpop_private_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+
+        # Submit PAR
+        pkce_verifier, state, dpop_authserver_nonce, resp = send_par_auth_request(
+            authserver_url,
+            authserver_meta,
+            login_hint,
+            CLIENT_ID,
+            REDIRECT_URI,
+            OAUTH_SCOPE,
+            client_secret_jwk,
+            dpop_private_jwk,
+        )
+        if resp.status_code == 400:
+            logger.warning("PAR HTTP 400: %s", resp.json())
+        resp.raise_for_status()
+        par_request_uri = resp.json()["request_uri"]
+
+        # Save auth request to DB
+        db = _get_db()
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            """INSERT INTO oauth_auth_requests
+               (state, authserver_iss, did, handle, pds_url, pkce_verifier,
+                scope, dpop_authserver_nonce, dpop_private_jwk, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                state,
+                authserver_meta["issuer"],
+                did,
+                handle,
+                pds_url,
+                pkce_verifier,
+                OAUTH_SCOPE,
+                dpop_authserver_nonce,
+                dpop_private_jwk.as_json(is_private=True),
+                now,
+            ],
+        )
+        db.commit()
+
+        # Redirect user to Authorization Server
+        auth_url = authserver_meta["authorization_endpoint"]
+        if not is_safe_url(auth_url):
+            flash("Invalid authorization endpoint", "error")
+            return render_template("login.html"), 400
+        qparam = urlencode({"client_id": CLIENT_ID, "request_uri": par_request_uri})
+        return redirect(f"{auth_url}?{qparam}")
+
+    @app.route("/auth/callback")
+    def oauth_callback():
+        """OAuth callback — exchange code for tokens, issue platform JWT cookie."""
+        if error := request.args.get("error"):
+            error_description = request.args.get("error_description", "")
+            flash(f"Authorization failed: {error}: {error_description}", "error")
+            return redirect("/auth/login")
+
+        state = request.args.get("state")
+        authserver_iss = request.args.get("iss")
+        authorization_code = request.args.get("code")
+
+        if not state or not authserver_iss or not authorization_code:
+            abort(400, "Missing required OAuth callback parameters")
+
+        db = _get_db()
+        row = db.execute(
+            "SELECT * FROM oauth_auth_requests WHERE state = ?",
+            [state],
+        ).fetchone()
+
+        if row is None:
+            abort(400, "OAuth request not found")
+
+        # Delete row to prevent replay
+        db.execute("DELETE FROM oauth_auth_requests WHERE state = ?", [state])
+        db.commit()
+
+        # Verify issuer matches
+        if row["authserver_iss"] != authserver_iss:
+            abort(400, "Issuer mismatch")
+        if row["state"] != state:
+            abort(400, "State mismatch")
+
+        # Exchange code for tokens
+        tokens, dpop_authserver_nonce = initial_token_request(
+            dict(row),
+            authorization_code,
+            CLIENT_ID,
+            REDIRECT_URI,
+            client_secret_jwk,
+        )
+
+        # Verify the account
+        if row["did"]:
+            did, handle, pds_url = row["did"], row["handle"], row["pds_url"]
+            if tokens["sub"] != did:
+                abort(400, "Token subject mismatch")
+        else:
+            did = tokens["sub"]
+            if not is_valid_did(did):
+                abort(400, "Invalid DID in token response")
+            did, handle, did_doc = resolve_identity(did)
+            pds_url = pds_endpoint(did_doc)
+            authserver_url = resolve_pds_authserver(pds_url)
+            if authserver_url != authserver_iss:
+                abort(400, "Auth server mismatch")
+
+        # Verify scope
+        if row["scope"] != tokens.get("scope"):
+            abort(400, "Scope mismatch")
+
+        # Save ATProto OAuth session
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            """INSERT OR REPLACE INTO oauth_sessions
+               (did, handle, pds_url, authserver_iss, access_token,
+                refresh_token, dpop_authserver_nonce, dpop_private_jwk, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                did,
+                handle,
+                pds_url,
+                authserver_iss,
+                tokens.get("access_token"),
+                tokens.get("refresh_token"),
+                dpop_authserver_nonce,
+                row["dpop_private_jwk"],
+                now,
+            ],
+        )
+        db.commit()
+
+        # Check if user exists in the users table
+        user_model = _get_user_model()
+        user = user_model.get(did)
+
+        if user is None:
+            # First-time user — redirect to signup
+            # Store DID and handle in session for the signup flow
+            session["pending_did"] = did
+            session["pending_handle"] = handle
+            return redirect("/auth/signup")
+
+        # Returning user — update handle if changed
+        if user["handle"] != handle:
+            user_model.update(did, handle=handle)
+
+        # Fetch display name (best-effort update)
+        display_name = _fetch_display_name(did) or user.get("display_name") or handle
+
+        # Issue platform JWT
+        token = platform_jwt.create_token(
+            user_did=did,
+            handle=handle,
+            display_name=display_name,
+        )
+
+        resp = make_response(redirect(f"https://{PLATFORM_DOMAIN}/"))
+        resp.set_cookie(
+            COOKIE_NAME,
+            token,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            domain=COOKIE_DOMAIN,
+        )
+        return resp
+
+    @app.route("/auth/signup", methods=("GET", "POST"))
+    def signup():
+        """Signup form for first-time users."""
+        pending_did = session.get("pending_did")
+        pending_handle = session.get("pending_handle")
+
+        if not pending_did or not pending_handle:
+            return redirect("/auth/login")
+
+        default_username = _default_username_from_handle(pending_handle)
+
+        if request.method != "POST":
+            return render_template(
+                "signup.html",
+                handle=pending_handle,
+                default_username=default_username,
+            )
+
+        username = request.form.get("username", "").strip().lower()
+
+        # Validate username
+        valid, error_msg = validate_username(username)
+        if not valid:
+            flash(error_msg, "error")
+            return render_template(
+                "signup.html",
+                handle=pending_handle,
+                default_username=username,
+            ), 400
+
+        # Check uniqueness
+        user_model = _get_user_model()
+        existing = user_model.get_by_username(username)
+        if existing:
+            flash("Username is already taken", "error")
+            return render_template(
+                "signup.html",
+                handle=pending_handle,
+                default_username=username,
+            ), 400
+
+        # Fetch display name
+        display_name = _fetch_display_name(pending_did) or pending_handle
+
+        # Create user
+        try:
+            user = user_model.create(
+                did=pending_did,
+                handle=pending_handle,
+                display_name=display_name,
+                username=username,
+            )
+        except Exception as e:
+            logger.error("Failed to create user: %s", e)
+            flash("Failed to create account. Please try again.", "error")
+            return render_template(
+                "signup.html",
+                handle=pending_handle,
+                default_username=username,
+            ), 500
+
+        # Clear pending session
+        session.pop("pending_did", None)
+        session.pop("pending_handle", None)
+
+        # Issue platform JWT
+        token = platform_jwt.create_token(
+            user_did=pending_did,
+            handle=pending_handle,
+            display_name=display_name,
+        )
+
+        resp = make_response(redirect(f"https://{PLATFORM_DOMAIN}/"))
+        resp.set_cookie(
+            COOKIE_NAME,
+            token,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            domain=COOKIE_DOMAIN,
+        )
+        return resp
+
+    @app.route("/auth/logout")
+    def oauth_logout():
+        """Clear platform JWT cookie and revoke ATProto tokens."""
+        # Try to revoke ATProto tokens if we have a session
+        cookie_token = request.cookies.get(COOKIE_NAME)
+        if cookie_token:
+            try:
+                claims = platform_jwt.validate_token(cookie_token)
+                did = claims.get("sub")
+                if did:
+                    db = _get_db()
+                    oauth_row = db.execute(
+                        "SELECT * FROM oauth_sessions WHERE did = ?", [did]
+                    ).fetchone()
+                    if oauth_row:
+                        try:
+                            revoke_token_request(
+                                dict(oauth_row), CLIENT_ID, client_secret_jwk
+                            )
+                        except Exception as e:
+                            logger.warning("Token revocation failed: %s", e)
+                        db.execute(
+                            "DELETE FROM oauth_sessions WHERE did = ?", [did]
+                        )
+                        db.commit()
+            except Exception:
+                pass
+
+        session.clear()
+        resp = make_response(redirect(f"https://{PLATFORM_DOMAIN}/"))
+        resp.delete_cookie(
+            COOKIE_NAME,
+            domain=COOKIE_DOMAIN,
+        )
+        return resp
 
     @app.route("/.well-known/oauth-authorization-server")
     def as_metadata():
-        """OAuth Authorization Server metadata stub."""
-        metadata = {
-            "issuer": f"https://auth.{PLATFORM_DOMAIN}",
-            "authorization_endpoint": f"https://auth.{PLATFORM_DOMAIN}/auth/login",
-            "token_endpoint": f"https://auth.{PLATFORM_DOMAIN}/auth/token",
-            "jwks_uri": f"https://auth.{PLATFORM_DOMAIN}/.well-known/jwks.json",
+        """OAuth Authorization Server metadata stub.
+
+        robot.wtf is not an AS — this is a minimal stub for discovery.
+        """
+        return jsonify({
+            "issuer": f"https://{PLATFORM_DOMAIN}",
+            "authorization_endpoint": f"https://{PLATFORM_DOMAIN}/auth/login",
+            "token_endpoint": f"https://{PLATFORM_DOMAIN}/auth/token",
+            "jwks_uri": f"https://{PLATFORM_DOMAIN}/.well-known/jwks.json",
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
-        }
-        return jsonify(metadata)
+        })
 
     @app.route("/.well-known/jwks.json")
     def jwks():
-        """JSON Web Key Set stub.
+        """JSON Web Key Set — exposes the platform's RS256 public key."""
+        return jsonify({"keys": [rs256_jwk]})
 
-        Real implementation will expose the platform's RS256 public key.
-        """
-        return jsonify({"keys": []})
+    @app.errorhandler(500)
+    def internal_server_error(e):
+        return render_template("error.html", status_code=500, err=e), 500
+
+    @app.errorhandler(400)
+    def bad_request_error(e):
+        return render_template("error.html", status_code=400, err=e), 400
 
     return app
 

@@ -29,13 +29,28 @@ CREATE TABLE IF NOT EXISTS acls (
     PRIMARY KEY (wiki_slug, grantee_did)
 );
 
-CREATE TABLE IF NOT EXISTS oauth_sessions (
-    id TEXT PRIMARY KEY,
-    user_did TEXT NOT NULL REFERENCES users(did),
+CREATE TABLE IF NOT EXISTS oauth_auth_requests (
+    state TEXT PRIMARY KEY,
+    authserver_iss TEXT NOT NULL,
+    did TEXT,
+    handle TEXT,
+    pds_url TEXT,
+    pkce_verifier TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    dpop_authserver_nonce TEXT NOT NULL,
     dpop_private_jwk TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_sessions (
+    did TEXT PRIMARY KEY,
+    handle TEXT,
+    pds_url TEXT NOT NULL,
+    authserver_iss TEXT NOT NULL,
     access_token TEXT,
     refresh_token TEXT,
-    token_expires_at TEXT,
+    dpop_authserver_nonce TEXT NOT NULL,
+    dpop_private_jwk TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 

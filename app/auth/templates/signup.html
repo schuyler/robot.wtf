@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+
+{% block title %}Choose Username — robot.wtf{% endblock %}
+
+{% block content %}
+<article>
+  <h3>Choose a Username</h3>
+  <p>Welcome, <code>{{ handle }}</code>. Pick a username for your account.</p>
+  <form method="post">
+    <label for="username">Username</label>
+    <input name="username" id="username" value="{{ default_username }}"
+           pattern="[a-z0-9][a-z0-9-]{1,28}[a-z0-9]"
+           minlength="3" maxlength="30"
+           style="font-family: monospace;"
+           required>
+    <small>Lowercase letters, digits, and hyphens. 3-30 characters.</small>
+    <input type="submit" value="Create Account">
+  </form>
+</article>
+{% endblock %}
