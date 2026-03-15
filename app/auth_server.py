@@ -11,6 +11,8 @@ Routes:
 - GET  /auth/logout — clear cookie
 - GET  /auth/signup — username form (first-time users)
 - POST /auth/signup — create user record
+- GET  /auth/oauth/consent — MCP OAuth consent page
+- POST /auth/oauth/consent — approve/deny MCP OAuth consent
 - GET  /.well-known/oauth-authorization-server — AS metadata stub
 - GET  /.well-known/jwks.json — RS256 public key
 """
@@ -22,6 +24,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -53,6 +56,14 @@ from app.auth.atproto_oauth import (
     revoke_token_request,
 )
 from app.auth.atproto_security import is_safe_url
+from app.auth.consent import (
+    APPROVAL_TOKEN_LIFETIME,
+    CONSENT_TOKEN_LIFETIME,
+    OAUTH_PARAM_NAMES,
+    derive_signing_key,
+    sign_token as sign_consent_token,
+    verify_token as verify_consent_token,
+)
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.db import get_connection, init_schema
 from app.models.user import UserModel, validate_username
@@ -215,8 +226,13 @@ def create_app(
     @app.route("/auth/login", methods=("GET", "POST"))
     def oauth_login():
         """Login page (GET) or initiate OAuth flow (POST)."""
+        # Preserve return_to across the login flow
+        return_to = request.args.get("return_to") or request.form.get("return_to", "")
+        if return_to:
+            session["return_to"] = return_to
+
         if request.method != "POST":
-            return render_template("login.html")
+            return render_template("login.html", return_to=return_to)
 
         username = request.form.get("username", "").strip()
 
@@ -421,7 +437,11 @@ def create_app(
             display_name=display_name,
         )
 
-        resp = make_response(redirect(f"https://{PLATFORM_DOMAIN}/"))
+        # Check for a return_to URL (e.g., from MCP consent flow)
+        return_to = session.pop("return_to", None)
+        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/"
+
+        resp = make_response(redirect(redirect_target))
         resp.set_cookie(
             COOKIE_NAME,
             token,
@@ -505,7 +525,11 @@ def create_app(
             display_name=display_name,
         )
 
-        resp = make_response(redirect(f"https://{PLATFORM_DOMAIN}/"))
+        # Check for a return_to URL (e.g., from MCP consent flow)
+        return_to = session.pop("return_to", None)
+        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/"
+
+        resp = make_response(redirect(redirect_target))
         resp.set_cookie(
             COOKIE_NAME,
             token,
@@ -516,6 +540,156 @@ def create_app(
             domain=COOKIE_DOMAIN,
         )
         return resp
+
+    # --- MCP OAuth Consent ---
+
+    consent_key = derive_signing_key(private_key)
+
+    def _extract_oauth_params() -> dict:
+        """Extract OAuth params from request args, preserving all values."""
+        params = {}
+        for name in OAUTH_PARAM_NAMES:
+            val = request.args.get(name)
+            if val:
+                params[name] = val
+        return params
+
+    def _build_authorize_callback_url(oauth_params: dict, approval_token: str, wiki_slug: str) -> str:
+        """Build the URL to redirect back to MCP /authorize/callback."""
+        # The MCP server's authorize callback is on the wiki subdomain
+        base = f"https://{wiki_slug}.{PLATFORM_DOMAIN}/authorize/callback"
+        query = urlencode({
+            **oauth_params,
+            "approval_token": approval_token,
+        })
+        return f"{base}?{query}"
+
+    @app.route("/auth/oauth/consent", methods=("GET", "POST"))
+    def oauth_consent():
+        """MCP OAuth consent page.
+
+        GET: Show the consent form (or redirect to login if no platform JWT).
+        POST: Process approve/deny.
+        """
+        if request.method == "POST":
+            return _handle_consent_post()
+        return _handle_consent_get()
+
+    def _handle_consent_get():
+        """Show consent page or redirect to login."""
+        oauth_params = _extract_oauth_params()
+
+        # Require at minimum client_id and redirect_uri
+        if not oauth_params.get("client_id") or not oauth_params.get("redirect_uri"):
+            abort(400, "Missing required OAuth parameters (client_id, redirect_uri)")
+
+        # Extract wiki slug from a 'wiki_slug' param or the Referer
+        wiki_slug = request.args.get("wiki_slug", "")
+        if not wiki_slug:
+            abort(400, "Missing wiki_slug parameter")
+
+        # Check for platform JWT cookie
+        cookie_token = request.cookies.get(COOKIE_NAME)
+        if not cookie_token:
+            # Redirect to login with return URL
+            return_url = request.url
+            return redirect(f"/auth/login?return_to={urlencode({'url': return_url})}")
+
+        # Validate platform JWT
+        try:
+            claims = platform_jwt.validate_token(cookie_token)
+        except Exception:
+            # Invalid/expired token — redirect to login
+            return_url = request.url
+            return redirect(f"/auth/login?return_to={urlencode({'url': return_url})}")
+
+        user_did = claims.get("sub")
+        handle = claims.get("handle", "")
+        display_name = claims.get("name", handle)
+
+        # Look up client name from the MCP OAuth DB (best-effort)
+        client_name = oauth_params.get("client_id", "Unknown client")
+
+        # Create a consent token that binds the OAuth params + user + expiry
+        consent_payload = {
+            **oauth_params,
+            "wiki_slug": wiki_slug,
+            "user_did": user_did,
+            "exp": time.time() + CONSENT_TOKEN_LIFETIME,
+        }
+        consent_token = sign_consent_token(consent_payload, consent_key)
+
+        # Determine wiki display name
+        wiki_name = f"{wiki_slug}.{PLATFORM_DOMAIN}"
+
+        # Extract scopes for display
+        scopes = oauth_params.get("scope", "").split() if oauth_params.get("scope") else []
+
+        return render_template(
+            "consent.html",
+            client_name=client_name,
+            wiki_name=wiki_name,
+            handle=handle,
+            scopes=scopes,
+            consent_token=consent_token,
+        )
+
+    def _handle_consent_post():
+        """Process consent approval or denial."""
+        consent_token_raw = request.form.get("consent_token", "")
+        action = request.form.get("action", "")
+
+        if not consent_token_raw:
+            abort(400, "Missing consent token")
+
+        # Verify consent token
+        payload = verify_consent_token(consent_token_raw, consent_key)
+        if payload is None:
+            abort(400, "Invalid or expired consent token")
+
+        # Re-verify platform JWT cookie to ensure the same user
+        cookie_token = request.cookies.get(COOKIE_NAME)
+        if not cookie_token:
+            abort(401, "Not authenticated")
+        try:
+            claims = platform_jwt.validate_token(cookie_token)
+        except Exception:
+            abort(401, "Invalid platform token")
+
+        if claims.get("sub") != payload.get("user_did"):
+            abort(403, "User mismatch")
+
+        # Extract original OAuth params from the consent token
+        oauth_params = {k: payload[k] for k in OAUTH_PARAM_NAMES if k in payload}
+        wiki_slug = payload.get("wiki_slug", "")
+        user_did = payload.get("user_did", "")
+
+        if action == "deny":
+            # Redirect to Claude.ai's redirect_uri with error
+            redirect_uri = oauth_params.get("redirect_uri", "")
+            state = oauth_params.get("state", "")
+            if redirect_uri:
+                error_params = {"error": "access_denied"}
+                if state:
+                    error_params["state"] = state
+                sep = "&" if "?" in redirect_uri else "?"
+                return redirect(f"{redirect_uri}{sep}{urlencode(error_params)}")
+            abort(400, "No redirect_uri to return error to")
+
+        if action == "approve":
+            # Create an approval token — a short-lived signed token that the MCP
+            # server's /authorize/callback will accept as proof of consent
+            approval_payload = {
+                "user_did": user_did,
+                "wiki_slug": wiki_slug,
+                "client_id": oauth_params.get("client_id", ""),
+                "exp": time.time() + APPROVAL_TOKEN_LIFETIME,
+            }
+            approval_token = sign_consent_token(approval_payload, consent_key)
+            callback_url = _build_authorize_callback_url(oauth_params, approval_token, wiki_slug)
+            return redirect(callback_url)
+
+        abort(400, "Invalid action")
 
     @app.route("/auth/logout")
     def oauth_logout():
