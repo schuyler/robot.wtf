@@ -321,11 +321,17 @@ class TenantResolver:
             otterwiki.pageindex.storage = storage
             otterwiki.sidebar.storage = storage
 
-            # TODO: patch plugin state dicts when plugins are available
-            # import otterwiki_api
-            # otterwiki_api._state["storage"] = storage
-            # import otterwiki_semantic_search
-            # otterwiki_semantic_search._state["storage"] = storage
+            # Patch plugin state dicts
+            try:
+                import otterwiki_api
+                otterwiki_api._state["storage"] = storage
+            except ImportError:
+                pass
+            try:
+                import otterwiki_semantic_search
+                otterwiki_semantic_search._state["storage"] = storage
+            except ImportError:
+                pass
 
             githttpserver = otterwiki.remote.GitHttpServer(path=repo_path)
             otterwiki.server.githttpserver = githttpserver
