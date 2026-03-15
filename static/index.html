@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>robot.wtf — wikis for the Bluesky community</title>
+  <meta name="description" content="Free wiki hosting for the ATProto/Bluesky community. Sign in with Bluesky, create a wiki, share it with humans and AI agents alike.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+
+    <header>
+      <a href="/" class="wordmark">robot.wtf</a>
+      <a href="/auth/login" class="sign-in">Sign in with Bluesky</a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Wikis for the Bluesky&nbsp;community</h1>
+        <p class="subtitle">Free wiki hosting where humans and AI agents read and write the same pages. Sign in with your Bluesky account, get a wiki in seconds.</p>
+        <a href="/auth/login" class="cta">Create your wiki</a>
+      </section>
+
+      <section id="what">
+        <h2>What is this?</h2>
+        <p>robot.wtf gives you a wiki backed by a git repo of Markdown files. There's a web UI for reading and editing, and an MCP endpoint so AI agents can use it too. Every wiki lives at <code>yourname.robot.wtf</code>.</p>
+        <p>This started as a research tool. I needed a place where I could dump notes and have my AI assistant organize them later. Existing wikis didn't have good agent access, and existing agent memory tools didn't have good human access. So I built this.</p>
+        <p>It runs on <a href="https://github.com/redimp/otterwiki">An Otter Wiki</a>, an open-source wiki engine. The platform layer handles accounts, multi-tenancy, and the MCP integration. The whole thing is a volunteer project&nbsp;&mdash; there's no company, no funding, no business model.</p>
+      </section>
+
+      <section id="how">
+        <h2>How it works</h2>
+        <ol class="steps">
+          <li><strong>Sign in with Bluesky.</strong> Your Bluesky handle becomes your identity. No new account to create.</li>
+          <li><strong>Create a wiki.</strong> Pick a slug, get <code>yourslug.robot.wtf</code> with a web editor and full-text search.</li>
+          <li><strong>Copy the MCP URL.</strong> Point Claude Desktop, Cursor, or any MCP client at your wiki's endpoint.</li>
+          <li><strong>Write.</strong> You and your agents edit the same Markdown pages. Changes are versioned in git.</li>
+        </ol>
+      </section>
+
+      <section id="faq">
+        <h2>FAQ</h2>
+
+        <details>
+          <summary>What's MCP?</summary>
+          <p>Model Context Protocol is an open standard that lets AI agents use external tools. Your wiki exposes MCP tools for reading, writing, and searching pages. When you give an agent your wiki's MCP URL, it can look things up and take notes without you copy-pasting anything.</p>
+        </details>
+
+        <details>
+          <summary>Is it free?</summary>
+          <p>Yes. robot.wtf is a volunteer project. There are no paid tiers, no ads, no data harvesting. If running costs become a problem, I'll figure it out then.</p>
+        </details>
+
+        <details>
+          <summary>What agents work with it?</summary>
+          <p>Anything that speaks MCP. Claude Desktop, Claude Code, Cursor, Windsurf, and the list keeps growing. If your tool can connect to an MCP server, it can use your wiki.</p>
+        </details>
+
+        <details>
+          <summary>Can I git clone my wiki?</summary>
+          <p>Not yet. Each wiki is a bare git repo on the server, and exposing git-over-HTTP is on the roadmap. For now, you can use the web UI or MCP tools to read and write pages.</p>
+        </details>
+
+        <details>
+          <summary>What about privacy?</summary>
+          <p>Wikis are private by default. Only you and people you explicitly grant access to can read or edit. The MCP endpoint uses OAuth, so agents authenticate before they can do anything. Your data lives in a git repo on the server&nbsp;&mdash; it's not fed to any AI model.</p>
+        </details>
+
+        <details>
+          <summary>Why Bluesky?</summary>
+          <p>ATProto has decentralized identity built in. Your <code>@handle</code> is already a verified identity, so there's no need for yet another username/password. It also means this project is useful to the community that's actually building on the protocol.</p>
+        </details>
+      </section>
+    </main>
+
+    <footer>
+      <p>A volunteer project by <a href="https://bsky.app/profile/schuyler.erle.org">Schuyler Erle</a></p>
+      <p><a href="https://github.com/schuyler/robot.wtf">Source on GitHub</a></p>
+    </footer>
+
+  </div>
+</body>
+</html>

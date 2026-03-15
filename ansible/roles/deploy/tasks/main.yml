@@ -19,6 +19,13 @@
       - "--exclude=*.pyc"
   notify: restart robot services
 
+- name: Sync static files to VPS
+  ansible.builtin.synchronize:
+    src: "{{ playbook_dir }}/../static/"
+    dest: /srv/static/
+    delete: true
+  notify: restart robot services
+
 - name: Copy requirements.txt
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../requirements.txt"
