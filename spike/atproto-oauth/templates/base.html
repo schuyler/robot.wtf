@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}robot.wtf ATProto Spike{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.purple.min.css">
+  <style>
+    article { max-width: 32em; margin: 2em auto; }
+    code { font-size: 0.85em; word-break: break-all; }
+    .flash-error { background: #861D13; color: white; padding: 0.5em 1em; border-radius: 4px; margin-bottom: 1em; }
+  </style>
+</head>
+<body>
+<header class="container">
+  <nav>
+    <ul><li><strong>robot.wtf</strong> ATProto Spike</li></ul>
+    <ul>
+      {% if g.user %}
+      <li>{{ session.user_handle }}</li>
+      <li><a href="/auth/profile">Profile</a></li>
+      <li><a href="/auth/logout">Logout</a></li>
+      {% else %}
+      <li><a href="/auth/login">Login</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+</header>
+<main class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      {% if category == "error" %}
+        <div class="flash-error">{{ message }}</div>
+      {% else %}
+        <div>{{ message }}</div>
+      {% endif %}
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
