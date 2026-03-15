@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block title %}Authorize — robot.wtf{% endblock %}
+
+{% block content %}
+<article>
+  <h3>Authorize Access</h3>
+  <p><strong>{{ client_name }}</strong> is requesting access to <strong>{{ wiki_name }}</strong>.</p>
+  {% if scopes %}
+  <p>Requested permissions:</p>
+  <ul>
+    {% for scope in scopes %}
+    <li><code>{{ scope }}</code></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p>Signed in as <code>{{ handle }}</code></p>
+  <form method="post">
+    <input type="hidden" name="consent_token" value="{{ consent_token }}">
+    <div role="group">
+      <button type="submit" name="action" value="approve">Approve</button>
+      <button type="submit" name="action" value="deny" class="secondary">Deny</button>
+    </div>
+  </form>
+</article>
+{% endblock %}

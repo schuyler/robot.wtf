@@ -7,6 +7,7 @@
   <h3>Login with Bluesky</h3>
   <form method="post">
     <p>Enter your Bluesky handle to continue</p>
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
     <fieldset role="group">
       <input name="username" id="username" placeholder="alice.bsky.social" style="font-family: monospace;" required>
       <input type="submit" value="Login">
@@ -14,6 +15,7 @@
   </form>
   <form method="post">
     <input name="username" type="hidden" value="https://bsky.social">
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
     <input class="secondary" type="submit" value="Create Account with Bluesky Social">
   </form>
 </article>
