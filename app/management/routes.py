@@ -25,6 +25,46 @@ from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
 
+# --- Tier limits (free tier) ---
+MAX_WIKIS_PER_USER = 1
+MAX_PAGES_PER_WIKI = 500
+MAX_COLLABORATORS_PER_WIKI = 3
+
+# Slug validation: lowercase alphanumeric + hyphens, 3-30 chars,
+# no leading/trailing hyphens
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$")
+
+# Slugs that conflict with infrastructure subdomains
+RESERVED_SLUGS = frozenset({
+    "admin", "api", "app", "assets", "auth", "billing", "blog",
+    "dev", "docs", "help", "mcp", "null", "static", "status",
+    "support", "undefined", "wiki", "www",
+})
+
+
+def validate_slug(slug: str) -> tuple[bool, str | None]:
+    """Validate a wiki slug for format and reserved names.
+
+    Returns:
+        (True, None) if valid, (False, error_message) if invalid.
+    """
+    if not slug:
+        return False, "slug is required"
+    if slug != slug.lower():
+        return False, "slug must be lowercase"
+    if not _SLUG_PATTERN.match(slug):
+        if len(slug) < 3:
+            return False, "slug must be at least 3 characters"
+        if len(slug) > 30:
+            return False, "slug must be at most 30 characters"
+        if slug.startswith("-") or slug.endswith("-"):
+            return False, "slug must not start or end with a hyphen"
+        return False, "slug must contain only lowercase letters, digits, and hyphens"
+    if slug in RESERVED_SLUGS:
+        return False, "slug is reserved"
+    return True, None
+
+
 # Route patterns
 _USERNAME_ENDPOINT = re.compile(r"^/api/username$")
 _AUTH_CALLBACK = re.compile(r"^/api/auth/callback$")
@@ -206,6 +246,24 @@ class ManagementMiddleware:
 
         return 404, {"error": "Not found"}
 
+    @staticmethod
+    def check_page_limit(wiki: dict) -> tuple[bool, str | None]:
+        """Check if a wiki has reached its page count limit.
+
+        Args:
+            wiki: The wiki dict (must include page_count).
+
+        Returns:
+            (True, None) if under the limit, (False, error_message) if over.
+        """
+        page_count = int(wiki.get("page_count", 0))
+        if page_count >= MAX_PAGES_PER_WIKI:
+            return False, (
+                f"Page limit reached ({MAX_PAGES_PER_WIKI} pages "
+                f"per wiki on free tier)"
+            )
+        return True, None
+
     # --- Username ---
 
     def _set_username(
@@ -254,14 +312,24 @@ class ManagementMiddleware:
         self, user: AuthenticatedUser, environ: dict
     ) -> tuple[int, dict]:
         body = _read_json_body(environ)
-        slug = body.get("slug", "").strip()
+        slug = body.get("slug", "").strip().lower()
         display_name = body.get("display_name", "").strip()
         wiki_purpose = body.get("purpose", "").strip()
 
-        if not slug:
-            return 400, {"error": "slug is required"}
         if not display_name:
             return 400, {"error": "display_name is required"}
+
+        # Validate slug format
+        valid, error = validate_slug(slug)
+        if not valid:
+            return 400, {"error": error}
+
+        # Check tier limit: max wikis per user
+        wiki_count = int(user.record.get("wiki_count", 0))
+        if wiki_count >= MAX_WIKIS_PER_USER:
+            return 403, {
+                "error": f"Wiki limit reached ({MAX_WIKIS_PER_USER} wiki per user on free tier)"
+            }
 
         # Generate MCP token
         plaintext_token, token_hash = generate_mcp_token()
@@ -305,7 +373,6 @@ class ManagementMiddleware:
             return 500, {"error": "Failed to initialize wiki repository"}
 
         # Increment wiki count
-        wiki_count = int(user.record.get("wiki_count", 0))
         self._users.update(user.user_did, wiki_count=wiki_count + 1)
 
         return 201, {
@@ -405,6 +472,17 @@ class ManagementMiddleware:
         caller_acl = self._acls.get(slug, user.user_did)
         if not caller_acl or caller_acl.get("role") != "owner":
             return 403, {"error": "Only the owner can grant access"}
+
+        # Check collaborator limit (count non-owner ACL entries)
+        existing_acls = self._acls.list_by_wiki(slug)
+        collaborator_count = sum(
+            1 for a in existing_acls
+            if a["role"] != "owner" and a["grantee_did"] != grantee_did
+        )
+        if collaborator_count >= MAX_COLLABORATORS_PER_WIKI:
+            return 403, {
+                "error": f"Collaborator limit reached ({MAX_COLLABORATORS_PER_WIKI} per wiki on free tier)"
+            }
 
         # Verify grantee exists
         grantee = self._users.get(grantee_did)

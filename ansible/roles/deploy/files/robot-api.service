@@ -8,6 +8,7 @@ Type=notify
 User=robot
 Group=robot
 WorkingDirectory=/srv/app/src
+EnvironmentFile=/srv/data/robot.env
 ExecStart=/srv/app/venv/bin/gunicorn \
     -c app/gunicorn.conf.py \
     app.api_server:application
@@ -15,6 +16,7 @@ Environment=ROBOT_DB_PATH=/srv/data/robot.db
 Environment=SIGNING_KEY_PATH=/srv/data/signing_key.pem
 Environment=PLATFORM_DOMAIN=robot.wtf
 Environment=ROBOT_STATIC_DIR=/srv/static
+Environment=WIKI_BASE=/srv/data/wikis
 Environment=GUNICORN_BIND=0.0.0.0:8002
 Restart=on-failure
 RestartSec=5
