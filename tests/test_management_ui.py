@@ -135,6 +135,8 @@ def collab_token(platform_jwt, collab_user):
 @pytest.fixture
 def flask_app(rsa_keys, user_model, wiki_model, acl_model, platform_jwt, tmp_path):
     """Create a configured Flask test app."""
+    import os
+    os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
     from app.api_server import _create_flask_app
 
     app = _create_flask_app()

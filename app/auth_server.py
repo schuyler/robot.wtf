@@ -160,8 +160,15 @@ def create_app(
     """
     app = Flask(__name__, template_folder="auth/templates")
 
-    # Secret key for Flask session (used for flash messages only)
-    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
+    # Secret key for Flask session — must be set in production
+    secret_key = os.environ.get("FLASK_SECRET_KEY", "")
+    if not secret_key or secret_key.startswith("dev-secret"):
+        if os.environ.get("FLASK_ENV") != "testing":
+            raise RuntimeError(
+                "FLASK_SECRET_KEY must be set to a strong random value in production"
+            )
+        secret_key = "test-secret-for-testing-only"
+    app.secret_key = secret_key
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = True
 
@@ -812,8 +819,11 @@ def create_app(
     return app
 
 
-# Gunicorn entry point
-application = create_app()
+# Gunicorn entry point — guard so tests can import without a live environment
+try:
+    application = create_app()
+except Exception:
+    application = None  # Tests create their own app via create_app()
 
 
 if __name__ == "__main__":

@@ -435,3 +435,80 @@ class TestDefaultUsername:
         # underscore stripped, result is "testuser"
         assert "_" not in result
         assert result == "testuser"
+
+
+# --- FLASK_SECRET_KEY Enforcement ---
+
+
+class TestFlaskSecretKeyEnforcement:
+    """FLASK_SECRET_KEY must be set in production; dev default is rejected."""
+
+    def test_missing_secret_key_raises_in_production(self, db_path, client_jwk, rsa_keys):
+        """create_app() without FLASK_SECRET_KEY raises RuntimeError."""
+        jwk_path, _ = client_jwk
+        key_path, _ = rsa_keys
+
+        # Set paths so module-level import works
+        os.environ["CLIENT_JWK_PATH"] = jwk_path
+        os.environ["SIGNING_KEY_PATH"] = key_path
+        os.environ["ROBOT_DB_PATH"] = db_path
+        saved = os.environ.pop("FLASK_SECRET_KEY", None)
+        os.environ.pop("FLASK_ENV", None)  # not testing mode
+        try:
+            from app.auth_server import create_app
+            with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
+                create_app(
+                    db_path=db_path,
+                    client_jwk_path=jwk_path,
+                    signing_key_path=key_path,
+                )
+        finally:
+            if saved is not None:
+                os.environ["FLASK_SECRET_KEY"] = saved
+
+    def test_dev_default_secret_key_raises_in_production(self, db_path, client_jwk, rsa_keys):
+        """create_app() with the dev-default key raises RuntimeError."""
+        jwk_path, _ = client_jwk
+        key_path, _ = rsa_keys
+
+        os.environ["CLIENT_JWK_PATH"] = jwk_path
+        os.environ["SIGNING_KEY_PATH"] = key_path
+        os.environ["ROBOT_DB_PATH"] = db_path
+        saved_key = os.environ.get("FLASK_SECRET_KEY")
+        saved_env = os.environ.get("FLASK_ENV")
+        os.environ["FLASK_SECRET_KEY"] = "dev-secret-change-me"
+        os.environ.pop("FLASK_ENV", None)
+        try:
+            from app.auth_server import create_app
+            with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
+                create_app(
+                    db_path=db_path,
+                    client_jwk_path=jwk_path,
+                    signing_key_path=key_path,
+                )
+        finally:
+            if saved_key is not None:
+                os.environ["FLASK_SECRET_KEY"] = saved_key
+            else:
+                os.environ.pop("FLASK_SECRET_KEY", None)
+            if saved_env is not None:
+                os.environ["FLASK_ENV"] = saved_env
+
+    def test_valid_secret_key_works(self, db_path, client_jwk, rsa_keys):
+        """create_app() with a real secret key succeeds."""
+        jwk_path, _ = client_jwk
+        key_path, _ = rsa_keys
+        os.environ["CLIENT_JWK_PATH"] = jwk_path
+        os.environ["SIGNING_KEY_PATH"] = key_path
+        os.environ["ROBOT_DB_PATH"] = db_path
+        os.environ["FLASK_SECRET_KEY"] = "a-proper-secret-key-for-testing-xyz"
+        try:
+            from app.auth_server import create_app
+            application = create_app(
+                db_path=db_path,
+                client_jwk_path=jwk_path,
+                signing_key_path=key_path,
+            )
+            assert application.secret_key == "a-proper-secret-key-for-testing-xyz"
+        finally:
+            os.environ.pop("FLASK_SECRET_KEY", None)

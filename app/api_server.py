@@ -88,9 +88,15 @@ def _create_flask_app() -> Flask:
         os.path.dirname(__file__), "management", "templates"
     )
     app = Flask(__name__, template_folder=template_dir, static_folder=None)
-    app.secret_key = os.environ.get(
-        "FLASK_SECRET_KEY", "dev-secret-key-change-in-production"
-    )
+    # Secret key for Flask session — must be set in production
+    secret_key = os.environ.get("FLASK_SECRET_KEY", "")
+    if not secret_key or secret_key.startswith("dev-secret"):
+        if os.environ.get("FLASK_ENV") != "testing":
+            raise RuntimeError(
+                "FLASK_SECRET_KEY must be set to a strong random value in production"
+            )
+        secret_key = "test-secret-for-testing-only"
+    app.secret_key = secret_key
 
     # --- Static / Landing ---
 
