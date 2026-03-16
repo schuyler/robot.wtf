@@ -251,7 +251,7 @@ class TestConsentGet:
 
 
 class TestConsentPost:
-    def _make_consent_token(self, signing_key, user_did="did:plc:test123", **extra):
+    def _make_consent_token(self, signing_key, user_did="did:plc:test123", csrf_nonce=None, **extra):
         payload = {
             **SAMPLE_OAUTH_PARAMS,
             "wiki_slug": "3gw",
@@ -259,6 +259,8 @@ class TestConsentPost:
             "exp": time.time() + CONSENT_TOKEN_LIFETIME,
             **extra,
         }
+        if csrf_nonce is not None:
+            payload["csrf_nonce"] = csrf_nonce
         return sign_token(payload, signing_key)
 
     def test_approve_redirects_to_mcp_callback(self, client, platform_token, signing_key):
@@ -339,6 +341,77 @@ class TestConsentPost:
             data={"consent_token": consent_token, "action": "maybe"},
         )
         assert resp.status_code == 400
+
+    def test_csrf_nonce_missing_returns_403(self, client, platform_token, signing_key):
+        """POST with a valid consent token that has no csrf_nonce field returns 403."""
+        # No csrf_nonce in token, no nonce in session
+        consent_token = self._make_consent_token(signing_key)
+        client.set_cookie("platform_token", platform_token)
+        resp = client.post(
+            "/auth/oauth/consent",
+            data={"consent_token": consent_token, "action": "approve"},
+        )
+        assert resp.status_code == 403
+
+    def test_csrf_nonce_mismatch_returns_403(self, client, platform_token, signing_key):
+        """POST with consent token csrf_nonce='abc' but session has 'xyz' returns 403."""
+        consent_token = self._make_consent_token(signing_key, csrf_nonce="abc")
+        client.set_cookie("platform_token", platform_token)
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = ["xyz"]
+        resp = client.post(
+            "/auth/oauth/consent",
+            data={"consent_token": consent_token, "action": "approve"},
+        )
+        assert resp.status_code == 403
+
+    def test_csrf_nonce_consumed_on_use(self, client, platform_token, signing_key):
+        """First POST with matching nonce succeeds; second POST with same token returns 403."""
+        nonce = "consume-me-nonce"
+        consent_token = self._make_consent_token(signing_key, csrf_nonce=nonce)
+        client.set_cookie("platform_token", platform_token)
+
+        # First POST — should succeed
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = [nonce]
+        resp = client.post(
+            "/auth/oauth/consent",
+            data={"consent_token": consent_token, "action": "approve"},
+        )
+        assert resp.status_code == 302
+
+        # Second POST with same consent token — nonce should be consumed, returns 403
+        resp2 = client.post(
+            "/auth/oauth/consent",
+            data={"consent_token": consent_token, "action": "approve"},
+        )
+        assert resp2.status_code == 403
+
+    def test_multiple_tabs_nonces(self, client, platform_token, signing_key):
+        """Two GETs create two nonces. POST with either nonce succeeds."""
+        nonce_a = "tab-a-nonce"
+        nonce_b = "tab-b-nonce"
+        token_a = self._make_consent_token(signing_key, csrf_nonce=nonce_a)
+        token_b = self._make_consent_token(signing_key, csrf_nonce=nonce_b)
+        client.set_cookie("platform_token", platform_token)
+
+        # Both nonces in session (simulating two tabs)
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = [nonce_a, nonce_b]
+
+        # POST with token_b (second tab) should succeed
+        resp = client.post(
+            "/auth/oauth/consent",
+            data={"consent_token": token_b, "action": "deny"},
+        )
+        assert resp.status_code == 302
+
+        # nonce_b is consumed; token_a (first tab) should still work
+        resp2 = client.post(
+            "/auth/oauth/consent",
+            data={"consent_token": token_a, "action": "deny"},
+        )
+        assert resp2.status_code == 302
 
 
 # --- Return-to Flow Tests ---
