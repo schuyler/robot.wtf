@@ -149,6 +149,26 @@ SAMPLE_OAUTH_PARAMS = {
 }
 
 
+# --- derive_signing_key Unit Tests ---
+
+
+class TestDeriveSigningKey:
+    def test_different_keys_produce_different_signing_keys(self):
+        # Keys share identical first 64 chars (the PEM header) but differ in body.
+        # The old [:64] slice would produce the same HMAC key for both.
+        header = "-----BEGIN RSA PRIVATE KEY-----\n"  # 32 chars
+        padding = "X" * (64 - len(header))             # pad to exactly 64 chars
+        key_a = header + padding + "AAAA" + "A" * 100
+        key_b = header + padding + "BBBB" + "B" * 100
+        assert derive_signing_key(key_a) != derive_signing_key(key_b)
+
+    def test_short_key_still_works(self):
+        short = "short"
+        result = derive_signing_key(short)
+        assert isinstance(result, bytes)
+        assert len(result) == 32
+
+
 # --- Consent Token Unit Tests ---
 
 
@@ -441,6 +461,87 @@ class TestConsentPost:
             data={"consent_token": token_a, "action": "deny"},
         )
         assert resp2.status_code == 302
+
+
+# --- Open Redirect Prevention Tests ---
+
+
+class TestReturnToOpenRedirect:
+    """Ensure return_to cannot redirect to an external domain (open redirect)."""
+
+    def test_return_to_rejects_absolute_url(self, client):
+        """Login with return_to=https://evil.com — must not redirect there."""
+        resp = client.get("/auth/login?return_to=https://evil.com")
+        assert resp.status_code == 200  # renders the form, not a redirect
+
+        # Verify evil.com is NOT stored as return_to in session
+        with client.session_transaction() as sess:
+            assert sess.get("return_to") != "https://evil.com"
+            # Either not set at all, or empty string
+            stored = sess.get("return_to", "")
+            assert not stored or stored.startswith("/")
+
+    def test_return_to_rejects_protocol_relative(self, client):
+        """return_to=//evil.com must be rejected (protocol-relative URL)."""
+        resp = client.get("/auth/login?return_to=//evil.com")
+        assert resp.status_code == 200
+        with client.session_transaction() as sess:
+            stored = sess.get("return_to", "")
+            assert not stored or stored.startswith("/")
+
+    def test_return_to_accepts_relative_path(self, client):
+        """Login with return_to=/some/page — must be stored and redirected to."""
+        resp = client.get("/auth/login?return_to=/some/page")
+        assert resp.status_code == 200
+        with client.session_transaction() as sess:
+            assert sess.get("return_to") == "/some/page"
+
+    @patch("app.auth_server.initial_token_request")
+    @patch("app.auth_server._fetch_display_name")
+    def test_callback_does_not_redirect_to_evil(
+        self, mock_display, mock_token, app, client, db_path
+    ):
+        """After login, callback must not follow a malicious return_to."""
+        mock_display.return_value = "Alice"
+        mock_token.return_value = (
+            {"sub": "did:plc:redirecttest", "scope": "atproto",
+             "access_token": "at1", "refresh_token": "rt1"},
+            "nonce1",
+        )
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO users (did, handle, display_name, username, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("did:plc:redirecttest", "alice.bsky.social", "Alice", "alicerd", now),
+        )
+        dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+        conn.execute(
+            """INSERT INTO oauth_auth_requests
+               (state, authserver_iss, did, handle, pds_url, pkce_verifier,
+                scope, dpop_authserver_nonce, dpop_private_jwk, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ["state-redirect", "https://bsky.social", "did:plc:redirecttest",
+             "alice.bsky.social", "https://pds.bsky.social", "verifier123",
+             "atproto", "nonce0", dpop_jwk.as_json(is_private=True), now],
+        )
+        conn.commit()
+        conn.close()
+
+        # Store malicious return_to in session (simulating a tampered session)
+        # In practice the fix prevents storing it, but test the callback too
+        with client.session_transaction() as sess:
+            sess["return_to"] = "https://evil.com/steal"
+
+        resp = client.get(
+            "/auth/callback?state=state-redirect&iss=https://bsky.social&code=code1"
+        )
+
+        assert resp.status_code == 302
+        location = resp.headers["Location"]
+        assert "evil.com" not in location
 
 
 # --- Return-to Flow Tests ---
