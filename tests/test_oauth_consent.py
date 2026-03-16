@@ -264,7 +264,10 @@ class TestConsentPost:
         return sign_token(payload, signing_key)
 
     def test_approve_redirects_to_mcp_callback(self, client, platform_token, signing_key):
-        consent_token = self._make_consent_token(signing_key)
+        nonce = "test-nonce-approve"
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = [nonce]
+        consent_token = self._make_consent_token(signing_key, csrf_nonce=nonce)
         client.set_cookie("platform_token", platform_token)
         resp = client.post(
             "/auth/oauth/consent",
@@ -279,7 +282,10 @@ class TestConsentPost:
         assert "state=random-state-42" in location
 
     def test_deny_redirects_with_error(self, client, platform_token, signing_key):
-        consent_token = self._make_consent_token(signing_key)
+        nonce = "test-nonce-deny"
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = [nonce]
+        consent_token = self._make_consent_token(signing_key, csrf_nonce=nonce)
         client.set_cookie("platform_token", platform_token)
         resp = client.post(
             "/auth/oauth/consent",
@@ -334,7 +340,10 @@ class TestConsentPost:
         assert resp.status_code == 401
 
     def test_invalid_action_returns_400(self, client, platform_token, signing_key):
-        consent_token = self._make_consent_token(signing_key)
+        nonce = "test-nonce-invalid-action"
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = [nonce]
+        consent_token = self._make_consent_token(signing_key, csrf_nonce=nonce)
         client.set_cookie("platform_token", platform_token)
         resp = client.post(
             "/auth/oauth/consent",
@@ -488,11 +497,16 @@ class TestApprovalToken:
         """The approval token in the redirect URL should be verifiable."""
         from urllib.parse import urlparse, parse_qs
 
+        nonce = "test-nonce-approval"
+        with client.session_transaction() as sess:
+            sess["csrf_nonces"] = [nonce]
+
         consent_token = sign_token(
             {
                 **SAMPLE_OAUTH_PARAMS,
                 "wiki_slug": "3gw",
                 "user_did": "did:plc:test123",
+                "csrf_nonce": nonce,
                 "exp": time.time() + 300,
             },
             signing_key,

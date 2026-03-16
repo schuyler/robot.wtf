@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -611,12 +612,17 @@ def create_app(
         client_name = oauth_params.get("client_id", "Unknown client")
 
         # Create a consent token that binds the OAuth params + user + expiry
+        nonce = secrets.token_hex(16)
         consent_payload = {
             **oauth_params,
             "wiki_slug": wiki_slug,
             "user_did": user_did,
+            "csrf_nonce": nonce,
             "exp": time.time() + CONSENT_TOKEN_LIFETIME,
         }
+        nonces = session.get("csrf_nonces", [])
+        nonces.append(nonce)
+        session["csrf_nonces"] = nonces[-5:]  # keep last 5 for multi-tab
         consent_token = sign_consent_token(consent_payload, consent_key)
 
         # Determine wiki display name
@@ -658,6 +664,16 @@ def create_app(
 
         if claims.get("sub") != payload.get("user_did"):
             abort(403, "User mismatch")
+
+        # Verify CSRF nonce
+        csrf_nonce = payload.get("csrf_nonce")
+        if not csrf_nonce:
+            abort(403, "Missing CSRF nonce")
+        session_nonces = session.get("csrf_nonces", [])
+        if csrf_nonce not in session_nonces:
+            abort(403, "Invalid CSRF nonce")
+        session_nonces.remove(csrf_nonce)
+        session["csrf_nonces"] = session_nonces
 
         # Extract original OAuth params from the consent token
         oauth_params = {k: payload[k] for k in OAUTH_PARAM_NAMES if k in payload}
