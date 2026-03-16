@@ -191,11 +191,12 @@ class TenantResolver:
         wiki_slug = _parse_host(host)
 
         if wiki_slug is None:
-            # Non-tenant subdomain — pass through with anonymous headers
-            environ["HTTP_X_OTTERWIKI_NAME"] = "Anonymous"
-            environ["HTTP_X_OTTERWIKI_EMAIL"] = "@anonymous"
-            environ["HTTP_X_OTTERWIKI_PERMISSIONS"] = "READ,WRITE,UPLOAD,ADMIN"
-            return self._app(environ, start_response)
+            # Non-tenant host — not a wiki subdomain, deny access.
+            # The platform domain and reserved subdomains (api, auth, mcp, www)
+            # are served by separate processes (api_server, auth_server); if a
+            # request somehow reaches the TenantResolver for those hosts it must
+            # NOT be granted any permissions, especially not ADMIN.
+            return _error_response(start_response, 404, "Not Found")
 
         # Look up wiki by slug
         wiki = self._wikis.get(wiki_slug)
