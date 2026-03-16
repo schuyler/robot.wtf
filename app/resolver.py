@@ -239,7 +239,7 @@ class TenantResolver:
         try:
             auth_result = self._resolve_auth(environ, wiki_slug, wiki)
         except AuthError as e:
-            if e.status in (401, 403) and _is_browser_request(environ):
+            if e.status == 403 and _is_browser_request(environ):
                 login_url = f"https://{PLATFORM_DOMAIN}/auth/login"
                 return _redirect_response(start_response, login_url)
             return _error_response(start_response, e.status, e.message)
