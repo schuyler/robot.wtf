@@ -549,8 +549,8 @@ class TestReturnToOpenRedirect:
 
 class TestReturnToFlow:
     def test_login_preserves_return_to(self, client):
-        """Login GET should pass return_to into template context."""
-        resp = client.get("/auth/login?return_to=https://robot.wtf/auth/oauth/consent?foo=bar")
+        """Login GET with a relative return_to should pass it into template context."""
+        resp = client.get("/auth/login?return_to=/auth/oauth/consent?foo=bar")
         assert resp.status_code == 200
         # The hidden input should be in the rendered HTML
         assert b"return_to" in resp.data
@@ -597,17 +597,17 @@ class TestReturnToFlow:
         conn.commit()
         conn.close()
 
-        # Set return_to in session
-        consent_url = "https://robot.wtf/auth/oauth/consent?client_id=test&wiki_slug=3gw"
+        # Set return_to in session — must be a relative URL
+        consent_path = "/auth/oauth/consent?client_id=test&wiki_slug=3gw"
         with client.session_transaction() as sess:
-            sess["return_to"] = consent_url
+            sess["return_to"] = consent_path
 
         resp = client.get(
             "/auth/callback?state=test-state-ret&iss=https://bsky.social&code=authcode1"
         )
 
         assert resp.status_code == 302
-        assert resp.headers["Location"] == consent_url
+        assert resp.headers["Location"] == consent_path
 
 
 # --- Wiki Membership Tests ---

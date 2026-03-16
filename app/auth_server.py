@@ -27,7 +27,7 @@ import secrets
 import sqlite3
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 from authlib.jose import JsonWebKey
 from flask import (
@@ -233,8 +233,10 @@ def create_app(
     @app.route("/auth/login", methods=("GET", "POST"))
     def oauth_login():
         """Login page (GET) or initiate OAuth flow (POST)."""
-        # Preserve return_to across the login flow
+        # Preserve return_to across the login flow — only accept relative URLs
         return_to = request.args.get("return_to") or request.form.get("return_to", "")
+        if return_to and not return_to.startswith("/"):
+            return_to = ""  # reject absolute URLs (open redirect prevention)
         if return_to:
             session["return_to"] = return_to
 
@@ -446,6 +448,9 @@ def create_app(
 
         # Check for a return_to URL (e.g., from MCP consent flow)
         return_to = session.pop("return_to", None)
+        # Reject absolute URLs stored in session (defense in depth)
+        if return_to and not return_to.startswith("/"):
+            return_to = None
         redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/"
 
         resp = make_response(redirect(redirect_target))
@@ -534,6 +539,9 @@ def create_app(
 
         # Check for a return_to URL (e.g., from MCP consent flow)
         return_to = session.pop("return_to", None)
+        # Reject absolute URLs stored in session (defense in depth)
+        if return_to and not return_to.startswith("/"):
+            return_to = None
         redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/"
 
         resp = make_response(redirect(redirect_target))
@@ -598,17 +606,17 @@ def create_app(
         # Check for platform JWT cookie
         cookie_token = request.cookies.get(COOKIE_NAME)
         if not cookie_token:
-            # Redirect to login with return URL
-            return_url = request.url
-            return redirect(f"/auth/login?return_to={urlencode({'url': return_url})}")
+            # Redirect to login with a relative return URL (path + query)
+            return_path = request.full_path.rstrip("?")
+            return redirect(f"/auth/login?return_to={quote(return_path, safe='/?=&')}")
 
         # Validate platform JWT
         try:
             claims = platform_jwt.validate_token(cookie_token)
         except Exception:
             # Invalid/expired token — redirect to login
-            return_url = request.url
-            return redirect(f"/auth/login?return_to={urlencode({'url': return_url})}")
+            return_path = request.full_path.rstrip("?")
+            return redirect(f"/auth/login?return_to={quote(return_path, safe='/?=&')}")
 
         user_did = claims.get("sub")
         handle = claims.get("handle", "")
