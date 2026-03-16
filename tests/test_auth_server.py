@@ -224,6 +224,7 @@ class TestOAuthCallback:
         assert "platform_token=" in cookie_header
         assert "HttpOnly" in cookie_header
         assert "Secure" in cookie_header
+        assert resp.headers["Location"].endswith("/app/")
 
     @patch("app.auth_server.initial_token_request")
     @patch("app.auth_server._fetch_display_name")
@@ -314,6 +315,7 @@ class TestSignupFlow:
         assert row is not None
         assert row["username"] == "signup2"
         assert row["handle"] == "signup2.bsky.social"
+        assert resp.headers["Location"].endswith("/app/")
 
     def test_signup_rejects_invalid_username(self, app, client):
         """Invalid usernames should be rejected with a 400."""

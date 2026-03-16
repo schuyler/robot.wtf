@@ -458,7 +458,7 @@ def create_app(
         # Reject absolute URLs stored in session (defense in depth)
         if return_to and not return_to.startswith("/"):
             return_to = None
-        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/"
+        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
 
         resp = make_response(redirect(redirect_target))
         resp.set_cookie(
@@ -549,7 +549,7 @@ def create_app(
         # Reject absolute URLs stored in session (defense in depth)
         if return_to and not return_to.startswith("/"):
             return_to = None
-        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/"
+        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
 
         resp = make_response(redirect(redirect_target))
         resp.set_cookie(

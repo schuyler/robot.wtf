@@ -161,6 +161,25 @@ def client(flask_app):
     return flask_app.test_client()
 
 
+# --- Landing page tests ---
+
+
+class TestLanding:
+    def test_landing_unauthenticated_serves_static(self, client):
+        """Unauthenticated visitor gets the marketing page."""
+        resp = client.get("/")
+        assert resp.status_code == 200
+
+    def test_landing_authenticated_redirects_to_app(
+        self, client, owner_token, owner_user
+    ):
+        """Authenticated user visiting / is redirected to /app/."""
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers["Location"].endswith("/app/")
+
+
 # --- Auth gating tests ---
 
 
