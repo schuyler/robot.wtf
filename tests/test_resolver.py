@@ -10,14 +10,17 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 
-def _make_environ(host: str, path: str = "/") -> dict:
-    return {
+def _make_environ(host: str, path: str = "/", accept: str = "") -> dict:
+    env = {
         "HTTP_HOST": host,
         "PATH_INFO": path,
         "REQUEST_METHOD": "GET",
         "wsgi.input": b"",
         "wsgi.errors": "",
     }
+    if accept:
+        env["HTTP_ACCEPT"] = accept
+    return env
 
 
 def _capture_response():
@@ -143,3 +146,89 @@ class TestParseHost:
         from app.resolver import _parse_host
         assert _parse_host("evil.com") is None
         assert _parse_host("") is None
+
+
+class TestBrowserRedirect:
+    """Browser visitors on private wikis are redirected to login; API gets JSON."""
+
+    def _make_resolver(self, *, public=False):
+        from app.resolver import TenantResolver
+        from app.auth.acl import AclEnforcer
+        from app.auth.middleware import AuthMiddleware, AuthError
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = None
+
+        acl_enforcer = MagicMock(spec=AclEnforcer)
+        if public:
+            acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
+        else:
+            acl_enforcer.check_public_access.side_effect = AuthError(
+                "Access denied", status=403
+            )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {"name": "Test Wiki", "disk_usage_bytes": 0}
+
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            acl_enforcer=acl_enforcer,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def test_browser_gets_redirect_on_403(self):
+        resolver = self._make_resolver(public=False)
+        start_response, calls = _capture_response()
+        environ = _make_environ("gruen.robot.wtf", accept="text/html,application/xhtml+xml,*/*")
+        resolver(environ, start_response)
+        assert len(calls) == 1
+        status, headers = calls[0]
+        assert status == "302 Found"
+        assert dict(headers)["Location"] == "https://robot.wtf/auth/login"
+
+    def test_api_gets_json_on_403(self):
+        resolver = self._make_resolver(public=False)
+        start_response, calls = _capture_response()
+        environ = _make_environ("gruen.robot.wtf", accept="application/json")
+        resolver(environ, start_response)
+        assert len(calls) == 1
+        status, headers = calls[0]
+        assert status == "403 Forbidden"
+        assert dict(headers)["Content-Type"] == "application/json"
+
+    def test_sse_client_gets_json_on_403(self):
+        resolver = self._make_resolver(public=False)
+        start_response, calls = _capture_response()
+        environ = _make_environ("gruen.robot.wtf", accept="text/event-stream")
+        resolver(environ, start_response)
+        assert len(calls) == 1
+        status, _ = calls[0]
+        assert status == "403 Forbidden"
+
+    def test_no_accept_header_gets_json_on_403(self):
+        resolver = self._make_resolver(public=False)
+        start_response, calls = _capture_response()
+        environ = _make_environ("gruen.robot.wtf")
+        resolver(environ, start_response)
+        assert len(calls) == 1
+        status, _ = calls[0]
+        assert status == "403 Forbidden"
+
+    def test_public_wiki_browser_passes_through(self):
+        from unittest.mock import patch
+        resolver = self._make_resolver(public=True)
+        start_response, calls = _capture_response()
+        environ = _make_environ("gruen.robot.wtf", accept="text/html,application/xhtml+xml,*/*")
+        with patch.object(resolver, "_swap_storage"):
+            resolver(environ, start_response)
+        assert len(calls) == 1
+        status, _ = calls[0]
+        assert status == "200 OK"

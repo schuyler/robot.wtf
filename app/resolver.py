@@ -157,6 +157,27 @@ def _error_response(
     return [body.encode("utf-8")]
 
 
+def _is_browser_request(environ: dict[str, Any]) -> bool:
+    """Return True if the client accepts HTML (i.e. is a browser)."""
+    accept = environ.get("HTTP_ACCEPT", "")
+    return "text/html" in accept
+
+
+def _redirect_response(
+    start_response: Callable, location: str
+) -> list[bytes]:
+    """Return a 302 redirect response."""
+    start_response(
+        "302 Found",
+        [
+            ("Location", location),
+            ("Content-Type", "text/html"),
+            ("Content-Length", "0"),
+        ],
+    )
+    return [b""]
+
+
 class TenantResolver:
     """WSGI middleware that resolves requests to a specific wiki tenant.
 
@@ -218,6 +239,9 @@ class TenantResolver:
         try:
             auth_result = self._resolve_auth(environ, wiki_slug, wiki)
         except AuthError as e:
+            if e.status in (401, 403) and _is_browser_request(environ):
+                login_url = f"https://{PLATFORM_DOMAIN}/auth/login"
+                return _redirect_response(start_response, login_url)
             return _error_response(start_response, e.status, e.message)
 
         # Strip write permissions for web UI writes when over quota
