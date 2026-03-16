@@ -228,6 +228,58 @@ class TestOAuthCallback:
 
     @patch("app.auth_server.initial_token_request")
     @patch("app.auth_server._fetch_display_name")
+    def test_callback_return_to_takes_precedence(
+        self, mock_display, mock_token, app, client, db_path
+    ):
+        """return_to in session should override /app/ default after OAuth callback."""
+        mock_display.return_value = "Alice Test"
+        mock_token.return_value = (
+            {"sub": "did:plc:testcb2", "scope": "atproto", "access_token": "at3", "refresh_token": "rt3"},
+            "nonce3",
+        )
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("did:plc:testcb2", "alice2.bsky.social", "Alice2", "alice2", now),
+        )
+        dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+        conn.execute(
+            """INSERT INTO oauth_auth_requests
+               (state, authserver_iss, did, handle, pds_url, pkce_verifier,
+                scope, dpop_authserver_nonce, dpop_private_jwk, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                "test-state-rt",
+                "https://bsky.social",
+                "did:plc:testcb2",
+                "alice2.bsky.social",
+                "https://pds.bsky.social",
+                "verifier789",
+                "atproto",
+                "nonce0",
+                dpop_jwk.as_json(is_private=True),
+                now,
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        with client.session_transaction() as sess:
+            sess["return_to"] = "/auth/oauth/consent?client_id=test-client"
+
+        resp = client.get(
+            "/auth/callback?state=test-state-rt&iss=https://bsky.social&code=authcode3"
+        )
+
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/auth/oauth/consent?client_id=test-client"
+        assert not resp.headers["Location"].endswith("/app/")
+
+    @patch("app.auth_server.initial_token_request")
+    @patch("app.auth_server._fetch_display_name")
     def test_callback_new_user_redirects_to_signup(
         self, mock_display, mock_token, app, client, db_path
     ):
@@ -316,6 +368,21 @@ class TestSignupFlow:
         assert row["username"] == "signup2"
         assert row["handle"] == "signup2.bsky.social"
         assert resp.headers["Location"].endswith("/app/")
+
+    @patch("app.auth_server._fetch_display_name")
+    def test_signup_return_to_takes_precedence(self, mock_display, app, client, db_path):
+        """return_to in session should override /app/ default after signup."""
+        mock_display.return_value = "Signup User RT"
+
+        with client.session_transaction() as sess:
+            sess["pending_did"] = "did:plc:signup_rt"
+            sess["pending_handle"] = "signuprt.bsky.social"
+            sess["return_to"] = "/auth/oauth/consent?client_id=test-client"
+
+        resp = client.post("/auth/signup", data={"username": "signuprt"})
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/auth/oauth/consent?client_id=test-client"
+        assert not resp.headers["Location"].endswith("/app/")
 
     def test_signup_rejects_invalid_username(self, app, client):
         """Invalid usernames should be rejected with a 400."""
