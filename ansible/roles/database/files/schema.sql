@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS wikis (
     is_public INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     last_accessed TEXT NOT NULL,
-    page_count INTEGER DEFAULT 0
+    page_count INTEGER DEFAULT 0,
+    disk_usage_bytes INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS acls (

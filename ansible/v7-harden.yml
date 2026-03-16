@@ -7,3 +7,4 @@
     - healthcheck
     - diskmon
     - backup
+    - quota

@@ -21,7 +21,7 @@ from typing import Any, Callable
 from app.auth.acl import AclEnforcer
 from app.auth.headers import build_proxy_headers
 from app.auth.middleware import AuthError, AuthMiddleware
-from app.auth.permissions import READ, format_permission_header
+from app.auth.permissions import READ, WRITE, UPLOAD, format_permission_header
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,9 @@ _storage_cache: dict[str, Any] = {}
 
 # Domain suffix for extracting wiki slug from Host header
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
+
+# Per-wiki disk quota
+QUOTA_BYTES = 50 * 1024 * 1024  # 50MB
 
 # Base path for wiki data
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
@@ -119,6 +122,21 @@ def _parse_host(host: str) -> str | None:
     return subdomain
 
 
+def _is_write_request(method: str, path: str) -> bool:
+    """Return True if the request would mutate wiki content."""
+    if method not in ("POST", "PUT", "PATCH"):
+        return False
+    # Web UI write paths
+    if path.endswith("/save") or "/attachments" in path or "/inline_attachment" in path:
+        return True
+    # API write paths
+    if path.startswith("/api/v1/pages") and method in ("PUT", "PATCH", "POST"):
+        return True
+    if "/rename" in path:
+        return True
+    return False
+
+
 def _error_response(
     start_response: Callable, status_code: int, message: str
 ) -> list[bytes]:
@@ -184,11 +202,30 @@ class TenantResolver:
         if not wiki:
             return _error_response(start_response, 404, "Wiki not found")
 
+        # Enforce disk quota on write requests
+        method = environ.get("REQUEST_METHOD", "GET")
+        path = environ.get("PATH_INFO", "/")
+        over_quota = wiki.get("disk_usage_bytes", 0) > QUOTA_BYTES
+        if over_quota and _is_write_request(method, path):
+            if path.startswith("/api/"):
+                return _error_response(
+                    start_response, 413, "Wiki quota exceeded (50MB limit)"
+                )
+            # Web UI writes: continue to auth, then strip write permissions below
+
         # Authenticate and authorize
         try:
             auth_result = self._resolve_auth(environ, wiki_slug, wiki)
         except AuthError as e:
             return _error_response(start_response, e.status, e.message)
+
+        # Strip write permissions for web UI writes when over quota
+        if over_quota and _is_write_request(method, path) and not path.startswith("/api/"):
+            proxy_headers = auth_result["proxy_headers"]
+            perms_key = "X-Otterwiki-Permissions"
+            raw = proxy_headers.get(perms_key, "")
+            stripped = [p for p in raw.split(",") if p not in (WRITE, UPLOAD)]
+            proxy_headers[perms_key] = format_permission_header(stripped)
 
         # Build repo path
         repo_path = wiki.get(

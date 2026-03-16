@@ -1,0 +1,16 @@
+---
+- name: Install wiki quota script
+  ansible.builtin.template:
+    src: wiki-quota.sh.j2
+    dest: /usr/local/bin/wiki-quota.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install wiki quota cron job
+  ansible.builtin.template:
+    src: wiki-quota.cron.j2
+    dest: /etc/cron.d/wiki-quota
+    owner: root
+    group: root
+    mode: "0644"
