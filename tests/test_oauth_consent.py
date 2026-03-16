@@ -211,7 +211,27 @@ class TestConsentGet:
         assert "/auth/login" in resp.headers["Location"]
         assert "return_to" in resp.headers["Location"]
 
-    def test_authenticated_shows_consent_page(self, client, platform_token):
+    def test_authenticated_shows_consent_page(self, client, platform_token, db_path):
+        # Insert the wiki owned by the test user so membership check passes
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO users (did, handle, display_name, username, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("did:plc:test123", "alice.bsky.social", "Alice", "alice", now),
+        )
+        conn.execute(
+            "INSERT INTO wikis (slug, owner_did, display_name, repo_path,"
+            " mcp_token_hash, is_public, created_at, last_accessed, page_count)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            ("3gw", "did:plc:test123", "3gw", "/srv/data/wikis/3gw",
+             "$2b$12$fakehash000000000000000000000000000000000000000000000",
+             0, now, now),
+        )
+        conn.commit()
+        conn.close()
         client.set_cookie("platform_token", platform_token)
         resp = client.get(self._consent_url())
         assert resp.status_code == 200

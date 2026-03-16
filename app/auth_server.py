@@ -65,9 +65,13 @@ from app.auth.consent import (
     sign_token as sign_consent_token,
     verify_token as verify_consent_token,
 )
+from app.auth.acl import AclEnforcer
 from app.auth.jwt import PlatformJWT, _load_keys
+from app.auth.middleware import AuthError
 from app.db import get_connection, init_schema
+from app.models.acl import AclModel
 from app.models.user import UserModel, validate_username
+from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +162,8 @@ def create_app(
 
     # Secret key for Flask session (used for flash messages only)
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = True
 
     # Override env vars if provided (for testing)
     if client_jwk_path:
@@ -607,6 +613,29 @@ def create_app(
         user_did = claims.get("sub")
         handle = claims.get("handle", "")
         display_name = claims.get("name", handle)
+
+        # Check wiki membership: user must have access to the wiki (via ACL,
+        # owner_did, or public flag) before the consent form is shown.
+        db = _get_db()
+        enforcer = AclEnforcer(
+            acl_model=AclModel(db),
+            wiki_model=WikiModel(db),
+        )
+        # First try public access; then try user-specific access
+        wiki_accessible = False
+        try:
+            enforcer.check_public_access(wiki_slug)
+            wiki_accessible = True
+        except AuthError:
+            pass
+        if not wiki_accessible:
+            try:
+                enforcer.check_access(user_did, wiki_slug)
+                wiki_accessible = True
+            except AuthError:
+                pass
+        if not wiki_accessible:
+            abort(403, "You do not have access to this wiki")
 
         # Look up client name from the MCP OAuth DB (best-effort)
         client_name = oauth_params.get("client_id", "Unknown client")
