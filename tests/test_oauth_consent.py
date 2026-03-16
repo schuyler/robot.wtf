@@ -489,6 +489,92 @@ class TestReturnToFlow:
         assert resp.headers["Location"] == consent_url
 
 
+# --- Wiki Membership Tests ---
+
+
+class TestConsentWikiMembership:
+    """Wiki membership check on GET /auth/oauth/consent."""
+
+    def _consent_url(self, wiki_slug="test-wiki", **extra):
+        params = {**SAMPLE_OAUTH_PARAMS, "wiki_slug": wiki_slug, **extra}
+        from urllib.parse import urlencode
+        return f"/auth/oauth/consent?{urlencode(params)}"
+
+    def _insert_user(self, db_path, did="did:plc:test123"):
+        """Insert a user row so foreign-key constraints are satisfied."""
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO users (did, handle, display_name, username, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (did, "alice.bsky.social", "Alice", "alice", now),
+        )
+        conn.commit()
+        conn.close()
+
+    def _insert_wiki(self, db_path, slug, owner_did="did:plc:owner", is_public=False):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO users (did, handle, display_name, username, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (owner_did, "owner.bsky.social", "Owner", "owner", now),
+        )
+        conn.execute(
+            "INSERT INTO wikis (slug, owner_did, display_name, repo_path,"
+            " mcp_token_hash, is_public, created_at, last_accessed, page_count)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (slug, owner_did, slug, f"/srv/data/wikis/{slug}",
+             "$2b$12$fakehash000000000000000000000000000000000000000000000",
+             int(is_public), now, now),
+        )
+        conn.commit()
+        conn.close()
+
+    def _insert_acl(self, db_path, wiki_slug, grantee_did, role="viewer"):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO acls (wiki_slug, grantee_did, role, granted_by, granted_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (wiki_slug, grantee_did, role, grantee_did, now),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_consent_get_rejects_unauthorized_wiki(self, client, platform_token, db_path):
+        """GET consent with a wiki the user has no ACL access to returns 403."""
+        # Insert the wiki but NOT an ACL entry for did:plc:test123
+        self._insert_wiki(db_path, "private-wiki", owner_did="did:plc:someone-else")
+        client.set_cookie("platform_token", platform_token)
+        resp = client.get(self._consent_url(wiki_slug="private-wiki"))
+        assert resp.status_code == 403
+
+    def test_consent_get_allows_authorized_wiki(self, client, platform_token, db_path):
+        """GET consent with a wiki the user has an ACL entry for returns 200."""
+        self._insert_user(db_path)
+        self._insert_wiki(db_path, "my-wiki", owner_did="did:plc:owner")
+        self._insert_acl(db_path, "my-wiki", "did:plc:test123", role="viewer")
+        client.set_cookie("platform_token", platform_token)
+        resp = client.get(self._consent_url(wiki_slug="my-wiki"))
+        assert resp.status_code == 200
+        assert b"Authorize Access" in resp.data
+
+    def test_consent_get_allows_public_wiki(self, client, platform_token, db_path):
+        """GET consent with a public wiki (no ACL needed) returns 200."""
+        self._insert_wiki(db_path, "open-wiki", owner_did="did:plc:owner", is_public=True)
+        client.set_cookie("platform_token", platform_token)
+        resp = client.get(self._consent_url(wiki_slug="open-wiki"))
+        assert resp.status_code == 200
+        assert b"Authorize Access" in resp.data
+
+
 # --- Approval Token Tests ---
 
 
