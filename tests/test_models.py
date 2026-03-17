@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import bcrypt
 import pytest
 
 from app.models.user import UserModel, validate_username
@@ -276,11 +275,11 @@ class TestWikiModel:
                 mcp_token_hash="$2b$12$hash7",
             )
 
-    def test_scan_by_token(self, wiki_model, sample_user):
+    def test_get_by_token(self, wiki_model, sample_user):
+        import hashlib
+
         plaintext = "test-token-123"
-        hashed = bcrypt.hashpw(
-            plaintext.encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
+        hashed = hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
 
         wiki_model.create(
             slug="token-wiki",
@@ -290,10 +289,10 @@ class TestWikiModel:
             mcp_token_hash=hashed,
         )
 
-        found = wiki_model.scan_by_token(plaintext)
+        found = wiki_model.get_by_token(plaintext)
         assert found is not None
         assert found["slug"] == "token-wiki"
 
-        assert wiki_model.scan_by_token("wrong-token") is None
+        assert wiki_model.get_by_token("wrong-token") is None
 
 
