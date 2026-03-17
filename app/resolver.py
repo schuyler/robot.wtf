@@ -218,6 +218,9 @@ def _swap_database(wiki_dir: str, is_public: bool = True, display_name: str = No
     engines = db._app_engines.get(app, {})
     current_engine = engines.get(None)
     if current_engine is not None and str(current_engine.url) == uri:
+        # Engine already points at this wiki's DB — skip engine swap but
+        # still reload preferences so multi-worker configs stay fresh.
+        otterwiki.server.update_app_config()
         return
 
     # Ensure DB exists with schema (seeds SITE_NAME and READ_ACCESS for private wikis)
