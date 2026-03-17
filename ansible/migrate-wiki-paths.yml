@@ -1,0 +1,116 @@
+---
+# One-time migration: consolidate wiki repos from /srv/wikis/ to /srv/data/wikis/
+#
+# Run: ansible-playbook ansible/migrate-wiki-paths.yml -i ansible/inventory.yml
+#
+# This migrates _default, dev, and test wikis. After running:
+# 1. Verify services work: curl -H "Host: dev.robot.wtf" http://localhost:8000/
+# 2. Run the deploy playbook to update env/config files
+# 3. Delete /srv/wikis/ once confirmed
+#
+# Safe to re-run: skips wikis that are already migrated.
+
+- name: Migrate wiki paths to /srv/data/wikis/
+  hosts: robot-wtf
+  become: true
+
+  tasks:
+    - name: Stop robot services before migration
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - robot-otterwiki
+        - robot-api
+        - robot-auth
+        - robot-mcp
+
+    - name: Create /srv/data/wikis if missing
+      ansible.builtin.file:
+        path: /srv/data/wikis
+        state: directory
+        owner: robot
+        group: robot
+        mode: "0755"
+
+    # Migrate _default (no /repo subdir — it's the otterwiki fallback)
+    - name: Check if _default needs migration
+      ansible.builtin.stat:
+        path: /srv/wikis/_default
+      register: old_default
+
+    - name: Migrate _default wiki
+      ansible.builtin.command:
+        cmd: mv /srv/wikis/_default /srv/data/wikis/_default
+      when: old_default.stat.exists
+
+    # Migrate dev
+    - name: Check if dev needs migration
+      ansible.builtin.stat:
+        path: /srv/wikis/dev
+      register: old_dev
+
+    - name: Create dev parent directory
+      ansible.builtin.file:
+        path: /srv/data/wikis/dev
+        state: directory
+        owner: robot
+        group: robot
+      when: old_dev.stat.exists
+
+    - name: Migrate dev wiki into repo subdir
+      ansible.builtin.command:
+        cmd: mv /srv/wikis/dev /srv/data/wikis/dev/repo
+      when: old_dev.stat.exists
+
+    - name: Update dev repo_path in database
+      ansible.builtin.command:
+        cmd: >
+          sqlite3 /srv/data/robot.db
+          "UPDATE wikis SET repo_path='/srv/data/wikis/dev/repo' WHERE slug='dev';"
+      when: old_dev.stat.exists
+
+    # Migrate test
+    - name: Check if test needs migration
+      ansible.builtin.stat:
+        path: /srv/wikis/test
+      register: old_test
+
+    - name: Create test parent directory
+      ansible.builtin.file:
+        path: /srv/data/wikis/test
+        state: directory
+        owner: robot
+        group: robot
+      when: old_test.stat.exists
+
+    - name: Migrate test wiki into repo subdir
+      ansible.builtin.command:
+        cmd: mv /srv/wikis/test /srv/data/wikis/test/repo
+      when: old_test.stat.exists
+
+    - name: Update test repo_path in database
+      ansible.builtin.command:
+        cmd: >
+          sqlite3 /srv/data/robot.db
+          "UPDATE wikis SET repo_path='/srv/data/wikis/test/repo' WHERE slug='test';"
+      when: old_test.stat.exists
+
+    # Fix ownership
+    - name: Fix ownership of /srv/data/wikis
+      ansible.builtin.file:
+        path: /srv/data/wikis
+        state: directory
+        owner: robot
+        group: robot
+        recurse: true
+
+    - name: Start robot services after migration
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - robot-otterwiki
+        - robot-api
+        - robot-auth
+        - robot-mcp

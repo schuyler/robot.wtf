@@ -5,8 +5,9 @@
 set -uo pipefail
 
 DB="/srv/data/robot.db"
+WIKI_BASE="/srv/data/wikis"
 
-for wiki_dir in /srv/wikis/*/; do
+for wiki_dir in "$WIKI_BASE"/*/; do
     [ -d "$wiki_dir" ] || continue
     SLUG="$(basename "$wiki_dir")"
     SIZE="$(du -sb "$wiki_dir" 2>/dev/null | cut -f1)"

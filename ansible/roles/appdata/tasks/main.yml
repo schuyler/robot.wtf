@@ -17,7 +17,7 @@
   loop:
     - { path: /srv }
     - { path: /srv/app }
-    - { path: /srv/wikis }
+    - { path: /srv/data/wikis }
     - { path: /srv/data, mode: "0700" }
     - { path: /srv/static }
     - { path: /srv/static/landing }
