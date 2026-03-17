@@ -20,11 +20,17 @@ from typing import Any, Callable
 from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
 from app.constants import MAX_PAGES_PER_WIKI
 from app.management.token import generate_mcp_token
+from app.rate_limit import WSGIRateLimiter, get_client_ip
 from app.resolver import _init_wiki_db, _initialized_dbs
 from app.models.user import RESERVED_NAMES, UserModel, validate_username
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
+
+# Module-level rate limiter singleton — shared across all requests within a worker
+_management_limiter = WSGIRateLimiter()
+_management_limiter.add_limit("api_write", "5/minute")
+_management_limiter.add_limit("api_read", "15/minute")
 
 # --- Tier limits (free tier) ---
 MAX_WIKIS_PER_USER = 1
@@ -168,6 +174,23 @@ class ManagementMiddleware:
             return self._app(environ, start_response)
 
         method = environ.get("REQUEST_METHOD", "GET")
+
+        # Rate limiting for /api/* routes
+        client_ip = get_client_ip(environ)
+        if method in ("POST", "PUT", "DELETE"):
+            if not _management_limiter.check("api_write", client_ip):
+                status, headers, body = _management_limiter.make_429_response(
+                    "Rate limit exceeded", json_response=True
+                )
+                start_response(status, headers)
+                return body
+        elif method == "GET":
+            if not _management_limiter.check("api_read", client_ip):
+                status, headers, body = _management_limiter.make_429_response(
+                    "Rate limit exceeded", json_response=True
+                )
+                start_response(status, headers)
+                return body
 
         # Auth callback is unauthenticated
         m = _AUTH_CALLBACK.match(path)

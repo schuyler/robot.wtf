@@ -34,8 +34,13 @@ from app.auth.headers import build_proxy_headers
 from app.auth.middleware import AuthError, AuthMiddleware
 from app.auth.permissions import READ, WRITE, UPLOAD, ADMIN, format_permission_header
 from app.constants import MAX_PAGES_PER_WIKI, QUOTA_BYTES
+from app.rate_limit import WSGIRateLimiter, get_client_ip
 
 logger = logging.getLogger(__name__)
+
+# Module-level rate limiter singleton — shared across all requests within a worker
+_resolver_limiter = WSGIRateLimiter()
+_resolver_limiter.add_limit("wiki_write", "5/minute")
 
 # Cache storage instances by repo path
 _storage_cache: dict[str, Any] = {}
@@ -471,6 +476,7 @@ def _error_response(
         403: "403 Forbidden",
         404: "404 Not Found",
         413: "413 Request Entity Too Large",
+        429: "429 Too Many Requests",
         500: "500 Internal Server Error",
     }
     status = status_map.get(status_code, f"{status_code} Error")
@@ -573,6 +579,21 @@ class TenantResolver:
                     msg = "Wiki quota exceeded (50MB limit)"
                 return _error_response(start_response, 413, msg)
             # Web UI writes: continue to auth, then strip write permissions below
+
+        # Rate limiting for write requests (quota check takes priority — 413 before 429)
+        if _is_write_request(method, path):
+            client_ip = get_client_ip(environ)
+            if not _resolver_limiter.check("wiki_write", client_ip):
+                if path.startswith("/api/"):
+                    return _error_response(start_response, 429, "Rate limit exceeded")
+                # Browser write: return HTML 429
+                body = "<h1>429 Too Many Requests</h1><p>Rate limit exceeded. Please slow down.</p>"
+                body_bytes = body.encode("utf-8")
+                start_response(
+                    "429 Too Many Requests",
+                    [("Content-Type", "text/html"), ("Content-Length", str(len(body_bytes)))],
+                )
+                return [body_bytes]
 
         # Build repo path
         repo_path = wiki.get(

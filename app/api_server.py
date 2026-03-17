@@ -20,6 +20,7 @@ from flask import (
     make_response,
     redirect,
     render_template,
+    render_template_string,
     request,
     send_from_directory,
     session,
@@ -79,6 +80,11 @@ def _create_flask_app() -> Flask:
         os.path.dirname(__file__), "management", "templates"
     )
     app = Flask(__name__, template_folder=template_dir, static_folder=None)
+
+    # Trust one X-Forwarded-For hop (set by Caddy) so Flask sees the real client IP
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     # Secret key for Flask session — must be set in production
     secret_key = os.environ.get("FLASK_SECRET_KEY", "")
     if not secret_key or secret_key.startswith("dev-secret"):
@@ -89,9 +95,29 @@ def _create_flask_app() -> Flask:
         secret_key = "test-secret-for-testing-only"
     app.secret_key = secret_key
 
+    # Rate limiting
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["60/minute"],
+        storage_uri="memory://",
+    )
+
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(error="Rate limit exceeded"), 429
+        return render_template_string(
+            "<h1>Too Many Requests</h1><p>Please slow down and try again later.</p>"
+        ), 429
+
     # --- Static / Landing ---
 
     @app.route("/api/internal/check-slug")
+    @limiter.exempt
     def check_slug():
         """Validate a subdomain for Caddy on-demand TLS."""
         domain = request.args.get("domain", "")
@@ -115,6 +141,7 @@ def _create_flask_app() -> Flask:
         return "", 404
 
     @app.route("/")
+    @limiter.exempt
     def landing():
         """Serve the landing page."""
         index_path = os.path.join(STATIC_DIR, "index.html")
@@ -123,6 +150,7 @@ def _create_flask_app() -> Flask:
         return "robot.wtf", 200
 
     @app.route("/static/<path:path>")
+    @limiter.exempt
     def static_files(path: str):
         """Serve static assets."""
         return send_from_directory(STATIC_DIR, path)
@@ -171,6 +199,7 @@ def _create_flask_app() -> Flask:
         )
 
     @app.route("/app/create", methods=["GET", "POST"])
+    @limiter.limit("1/minute", methods=["POST"])
     def wiki_create():
         """Create wiki form (GET) or process creation (POST)."""
         result = _require_login(app)
@@ -322,6 +351,7 @@ def _create_flask_app() -> Flask:
         return redirect(url_for("dashboard"))
 
     @app.route("/app/wiki/<slug>/delete", methods=["POST"])
+    @limiter.limit("2/minute")
     def wiki_delete(slug):
         """Delete a wiki."""
         result = _require_login(app)
@@ -410,6 +440,7 @@ def _create_flask_app() -> Flask:
         )
 
     @app.route("/app/account/delete", methods=["POST"])
+    @limiter.limit("1/minute")
     def account_delete():
         """Delete the current user's account."""
         result = _require_login(app)

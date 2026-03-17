@@ -651,3 +651,66 @@ class TestTemplateSeeding:
             capture_output=True, text=True,
         )
         assert result.stdout.strip() == "false", "Repo should not be bare"
+
+
+class TestManagementRateLimiting:
+    """ManagementMiddleware rate-limits /api/* writes and reads."""
+
+    def _make_middleware(self):
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+        from app.management.routes import ManagementMiddleware
+        from app.models.user import UserModel
+        from app.models.wiki import WikiModel
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [("Content-Type", "application/json")])
+            return [b"{}"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate.return_value = AuthenticatedUser(
+            user_did="did:plc:testuser",
+            handle="testuser.bsky.social",
+            display_name="Test User",
+            record={"wiki_count": 0},
+        )
+
+        user_model = MagicMock(spec=UserModel)
+        wiki_model = MagicMock(spec=WikiModel)
+        wiki_model.list_by_owner.return_value = []
+
+        return ManagementMiddleware(
+            stub_app,
+            auth_middleware=auth_middleware,
+            user_model=user_model,
+            wiki_model=wiki_model,
+        )
+
+    def test_api_write_rate_limited(self):
+        """POST /api/wikis returns 429 after exceeding write rate limit."""
+        import app.management.routes as routes_module
+        from app.rate_limit import WSGIRateLimiter
+
+        test_limiter = WSGIRateLimiter()
+        test_limiter.add_limit("api_write", "1/minute")
+        # Pre-exhaust the limit for this IP
+        test_limiter.check("api_write", "10.20.30.40")  # allowed
+        # Now the next one should be blocked
+
+        middleware = self._make_middleware()
+        original_limiter = routes_module._management_limiter
+        try:
+            routes_module._management_limiter = test_limiter
+            environ = _make_environ(
+                "POST",
+                "/api/wikis",
+                body={"slug": "newwiki", "display_name": "New Wiki"},
+                authorization="Bearer somejwt",
+            )
+            environ["REMOTE_ADDR"] = "10.20.30.40"
+            capture = _ResponseCapture()
+            middleware(environ, capture)
+            assert capture.status.startswith("429"), (
+                f"Expected 429 after write rate limit exceeded; got {capture.status!r}"
+            )
+        finally:
+            routes_module._management_limiter = original_limiter

@@ -7,3 +7,4 @@ authlib>=1.3
 dnspython>=2.6
 requests-hardened>=1.0.0b3
 numpy<2.4.0  # Proxmox VM lacks X86_V2 CPU features; numpy 2.4+ requires them
+Flask-Limiter>=3.5.0

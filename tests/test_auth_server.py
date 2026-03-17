@@ -795,3 +795,79 @@ class TestFlaskSecretKeyEnforcement:
             assert application.secret_key == "a-proper-secret-key-for-testing-xyz"
         finally:
             os.environ.pop("FLASK_SECRET_KEY", None)
+
+
+# --- Rate Limiting ---
+
+
+class TestRateLimiting:
+    """Auth server route rate limiting.
+
+    Flask-Limiter disables itself when TESTING=True. To exercise rate limits,
+    we must set RATELIMIT_ENABLED=True explicitly in the app config.
+    """
+
+    @pytest.fixture
+    def rate_limit_app(self, db_path, client_jwk, rsa_keys):
+        """Auth app with rate limiting enabled (overrides TESTING=True disabling)."""
+        jwk_path, _ = client_jwk
+        key_path, _ = rsa_keys
+
+        os.environ["ROBOT_DB_PATH"] = db_path
+        os.environ["CLIENT_JWK_PATH"] = jwk_path
+        os.environ["SIGNING_KEY_PATH"] = key_path
+        os.environ["PLATFORM_DOMAIN"] = "robot.wtf"
+        os.environ["FLASK_SECRET_KEY"] = "test-secret"
+
+        from app.auth_server import create_app
+        application = create_app(
+            db_path=db_path,
+            client_jwk_path=jwk_path,
+            signing_key_path=key_path,
+        )
+        application.config["TESTING"] = True
+        application.config["RATELIMIT_ENABLED"] = True
+
+        yield application
+
+        for key in ["ROBOT_DB_PATH", "CLIENT_JWK_PATH", "SIGNING_KEY_PATH",
+                    "FLASK_SECRET_KEY"]:
+            os.environ.pop(key, None)
+
+    @pytest.fixture
+    def rate_limit_client(self, rate_limit_app):
+        return rate_limit_app.test_client()
+
+    def test_login_post_rate_limited(self, rate_limit_client):
+        """POST /auth/login should return 429 after exceeding limit (1/minute per IP)."""
+        # The limit is 1/minute. First request may succeed (400 for bad handle is fine),
+        # but subsequent requests within the same window should get 429.
+        data = {"username": "not-a-valid-handle"}
+        responses = []
+        for _ in range(3):
+            resp = rate_limit_client.post(
+                "/auth/login",
+                data=data,
+                environ_base={"REMOTE_ADDR": "1.2.3.4"},
+            )
+            responses.append(resp.status_code)
+
+        assert 429 in responses, (
+            f"Expected at least one 429 after exceeding login rate limit; got: {responses}"
+        )
+
+    def test_signup_post_rate_limited(self, rate_limit_client):
+        """POST /auth/signup should return 429 after exceeding limit."""
+        data = {"username": "someuser"}
+        responses = []
+        for _ in range(3):
+            resp = rate_limit_client.post(
+                "/auth/signup",
+                data=data,
+                environ_base={"REMOTE_ADDR": "2.3.4.5"},
+            )
+            responses.append(resp.status_code)
+
+        assert 429 in responses, (
+            f"Expected at least one 429 after exceeding signup rate limit; got: {responses}"
+        )
