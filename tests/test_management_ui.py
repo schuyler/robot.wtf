@@ -163,14 +163,13 @@ class TestLanding:
         resp = client.get("/")
         assert resp.status_code == 200
 
-    def test_landing_authenticated_redirects_to_app(
+    def test_landing_authenticated_serves_landing_page(
         self, client, owner_token, owner_user
     ):
-        """Authenticated user visiting / is redirected to /app/."""
-        client.set_cookie("platform_token", owner_token, domain="localhost")
+        """Authenticated user visiting / still sees the landing page."""
+        client.set_cookie("platform_token", owner_token)
         resp = client.get("/", follow_redirects=False)
-        assert resp.status_code == 302
-        assert resp.headers["Location"].endswith("/app/")
+        assert resp.status_code == 200
 
 
 # --- Auth gating tests ---
