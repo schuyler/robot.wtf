@@ -404,26 +404,6 @@ class TestTierLimits:
         assert status == 403
         assert "limit" in body["error"].lower()
 
-    def test_page_limit_check(self, wiki_model, owner_user):
-        """check_page_limit should reject when at limit."""
-        wiki = wiki_model.create(
-            slug="page-wiki",
-            owner_did="did:plc:owner",
-            display_name="Page Wiki",
-            repo_path="/srv/data/wikis/page-wiki/repo",
-            mcp_token_hash="b" * 64,
-        )
-        # Under limit
-        ok, err = ManagementMiddleware.check_page_limit(wiki)
-        assert ok is True
-
-        # At limit
-        wiki_model.update("page-wiki", page_count=500)
-        wiki = wiki_model.get("page-wiki")
-        ok, err = ManagementMiddleware.check_page_limit(wiki)
-        assert ok is False
-        assert "limit" in err.lower()
-
 
 # --- Validation Tests ---
 

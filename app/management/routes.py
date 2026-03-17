@@ -18,6 +18,7 @@ import subprocess
 from typing import Any, Callable
 
 from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
+from app.constants import MAX_PAGES_PER_WIKI
 from app.management.token import generate_mcp_token
 from app.resolver import _init_wiki_db, _initialized_dbs
 from app.models.user import RESERVED_USERNAMES, UserModel, validate_username
@@ -27,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 # --- Tier limits (free tier) ---
 MAX_WIKIS_PER_USER = 1
-MAX_PAGES_PER_WIKI = 500
 # No collaborator limit for robot.wtf
 
 # Slug validation: lowercase alphanumeric + hyphens, 3-30 chars,
@@ -249,24 +249,6 @@ class ManagementMiddleware:
             return 405, {"error": "Method not allowed"}
 
         return 404, {"error": "Not found"}
-
-    @staticmethod
-    def check_page_limit(wiki: dict) -> tuple[bool, str | None]:
-        """Check if a wiki has reached its page count limit.
-
-        Args:
-            wiki: The wiki dict (must include page_count).
-
-        Returns:
-            (True, None) if under the limit, (False, error_message) if over.
-        """
-        page_count = int(wiki.get("page_count", 0))
-        if page_count >= MAX_PAGES_PER_WIKI:
-            return False, (
-                f"Page limit reached ({MAX_PAGES_PER_WIKI} pages "
-                f"per wiki on free tier)"
-            )
-        return True, None
 
     # --- Username ---
 
