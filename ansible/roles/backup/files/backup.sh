@@ -23,5 +23,14 @@ if [ -f /srv/data/mcp_oauth.db ]; then
     sudo -u robot sqlite3 /srv/data/mcp_oauth.db ".backup '${DEST}/mcp_oauth.db'"
 fi
 
+# Backup per-wiki databases
+for db_file in /srv/data/wikis/*/wiki.db; do
+    [ -f "$db_file" ] || continue
+    slug=$(basename "$(dirname "$db_file")")
+    mkdir -p "${DEST}/wikis/${slug}"
+    chown robot:robot "${DEST}/wikis/${slug}"
+    sudo -u robot sqlite3 "$db_file" ".backup '${DEST}/wikis/${slug}/wiki.db'"
+done
+
 # Prune backups older than retention period
 find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d -mtime "+${RETENTION_DAYS}" -exec rm -rf {} +
