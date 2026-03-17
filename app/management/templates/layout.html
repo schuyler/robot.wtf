@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Dashboard{% endblock %} &ndash; robot.wtf</title>
   <link href="https://cdn.jsdelivr.net/npm/halfmoon@2.0.1/css/halfmoon.min.css" rel="stylesheet">
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/robot.wtf.svg" type="image/svg+xml">
   <style>
     /* Minimal overrides to match robot.wtf landing page feel */
     .navbar { border-bottom: 1px solid var(--bs-border-color); }
@@ -44,7 +44,7 @@
 >
   <!-- Navbar -->
   <nav class="navbar navbar-expand px-3">
-    <a href="/app/" class="wordmark me-auto">robot.wtf</a>
+    <a href="/app/" class="wordmark me-auto"><img src="/static/robot.wtf.svg" alt="" height="24" style="vertical-align: middle; margin-right: 0.4rem;">robot.wtf</a>
     <div class="d-flex align-items-center gap-2">
       {% if user %}
       <span class="text-muted small">{{ user.handle }}</span>
