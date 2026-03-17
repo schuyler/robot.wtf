@@ -116,10 +116,7 @@ def _create_flask_app() -> Flask:
 
     @app.route("/")
     def landing():
-        """Serve the landing page. Authenticated users are redirected to /app/."""
-        user = _authenticate_cookie(app)
-        if user is not None:
-            return redirect("/app/")
+        """Serve the landing page."""
         index_path = os.path.join(STATIC_DIR, "index.html")
         if os.path.exists(index_path):
             return send_from_directory(STATIC_DIR, "index.html")
