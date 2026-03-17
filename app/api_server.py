@@ -72,6 +72,17 @@ def _require_login(app):
     return user
 
 
+def _get_user_or_redirect():
+    """Return g.user set by load_user(), or a redirect response if unauthenticated.
+
+    Avoids double JWT verification — g.user is already populated by before_request.
+    """
+    user = getattr(g, "user", None)
+    if user is None:
+        return redirect(f"/auth/login?return_to={request.url}")
+    return user
+
+
 def _is_owner(wiki, user_did):
     """Return True if user_did is the wiki owner."""
     return wiki is not None and wiki.get("owner_did") == user_did
@@ -220,7 +231,7 @@ def _create_flask_app() -> Flask:
     @app.route("/app/")
     def dashboard():
         """Dashboard: redirect to first wiki, or show empty-state create CTA."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result  # redirect
         user = result
@@ -240,7 +251,7 @@ def _create_flask_app() -> Flask:
     @limiter.limit("1/minute", methods=["POST"])
     def wiki_create():
         """Create wiki form (GET) or process creation (POST)."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result
@@ -338,7 +349,7 @@ def _create_flask_app() -> Flask:
     @app.route("/app/wiki/<slug>")
     def wiki_settings(slug):
         """Wiki settings page."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result
@@ -367,7 +378,7 @@ def _create_flask_app() -> Flask:
     @limiter.limit("5/minute")
     def wiki_settings_update(slug):
         """Update wiki settings (display name)."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result
@@ -396,7 +407,7 @@ def _create_flask_app() -> Flask:
     @limiter.limit("2/minute")
     def wiki_delete(slug):
         """Delete a wiki."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result
@@ -440,7 +451,7 @@ def _create_flask_app() -> Flask:
     @limiter.limit("2/minute")
     def mcp_regenerate(slug):
         """Regenerate MCP bearer token."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result
@@ -468,7 +479,7 @@ def _create_flask_app() -> Flask:
     @app.route("/app/account")
     def account():
         """Account settings page."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result
@@ -486,7 +497,7 @@ def _create_flask_app() -> Flask:
     @limiter.limit("1/minute")
     def account_delete():
         """Delete the current user's account."""
-        result = _require_login(app)
+        result = _get_user_or_redirect()
         if not hasattr(result, "user_did"):
             return result
         user = result

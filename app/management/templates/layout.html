@@ -111,7 +111,7 @@ halfmoon.onDOMContentLoaded();
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% for category, message in messages %}
     halfmoon.initStickyAlert({
-      content: "{{ message | e }}",
+      content: {{ message | tojson }},
       alertType: "alert-{{ category }}",
       fillType: "filled",
       hasDismissButton: true,

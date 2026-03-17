@@ -668,6 +668,8 @@ class TestContextProcessor:
 
     def test_sidebar_active_link(self, client, owner_token, owner_user, wiki_model):
         """Current wiki's sidebar link has active class."""
+        import re
+
         wiki_model.create(
             slug="active-wiki",
             owner_did="did:plc:owner",
@@ -678,8 +680,8 @@ class TestContextProcessor:
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.get("/app/wiki/active-wiki")
         html = resp.data.decode()
-        # The sidebar link for this wiki should have 'active'
-        assert "active" in html
+        # The sidebar link for this specific wiki should have the 'active' class
+        assert re.search(r'href="/app/wiki/active-wiki"[^>]*class="[^"]*\bactive\b', html)
 
     def test_platform_domain_injected(self, client, owner_token, owner_user, wiki_model):
         """platform_domain is injected by context processor and appears in templates."""
