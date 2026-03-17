@@ -17,6 +17,7 @@ import logging
 import os
 import subprocess
 from typing import Any, Callable
+from urllib.parse import quote
 
 from app.auth.acl import AclEnforcer
 from app.auth.headers import build_proxy_headers
@@ -386,6 +387,18 @@ def _is_browser_request(environ: dict[str, Any]) -> bool:
     return "text/html" in accept
 
 
+def _build_login_url(environ: dict[str, Any]) -> str:
+    """Build the login URL with a return_to param containing the original wiki URL."""
+    scheme = environ.get("wsgi.url_scheme", "https")
+    host = environ.get("HTTP_HOST", "")
+    path = environ.get("PATH_INFO", "/")
+    query = environ.get("QUERY_STRING", "")
+    original_url = f"{scheme}://{host}{path}"
+    if query:
+        original_url += f"?{query}"
+    return f"https://{PLATFORM_DOMAIN}/auth/login?return_to={quote(original_url, safe='')}"
+
+
 def _redirect_response(
     start_response: Callable, location: str
 ) -> list[bytes]:
@@ -463,7 +476,7 @@ class TenantResolver:
             auth_result = self._resolve_auth(environ, wiki_slug, wiki)
         except AuthError as e:
             if e.status == 403 and _is_browser_request(environ):
-                login_url = f"https://{PLATFORM_DOMAIN}/auth/login"
+                login_url = _build_login_url(environ)
                 return _redirect_response(start_response, login_url)
             return _error_response(start_response, e.status, e.message)
 
@@ -511,7 +524,7 @@ class TenantResolver:
                 # this is because READ_ACCESS is restricted
                 if wiki_access_config.get("READ_ACCESS", "ANONYMOUS") != "ANONYMOUS":
                     if _is_browser_request(environ):
-                        login_url = f"https://{PLATFORM_DOMAIN}/auth/login"
+                        login_url = _build_login_url(environ)
                         return _redirect_response(start_response, login_url)
                     return _error_response(start_response, 403, "Authentication required")
 

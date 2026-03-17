@@ -76,6 +76,17 @@ from app.models.wiki import WikiModel
 logger = logging.getLogger(__name__)
 
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
+
+
+def _is_safe_return_url(url: str) -> bool:
+    """Accept relative URLs and URLs on *.PLATFORM_DOMAIN."""
+    if not url:
+        return False
+    if url.startswith("/"):
+        return True
+    # Accept https://<slug>.robot.wtf/... — slug must be at least one char
+    pattern = rf"^https://[a-z0-9][a-z0-9-]*\.{re.escape(PLATFORM_DOMAIN)}/"
+    return bool(re.match(pattern, url))
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", f".{PLATFORM_DOMAIN}")
 COOKIE_NAME = "platform_token"
 COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours
@@ -240,10 +251,11 @@ def create_app(
     @app.route("/auth/login", methods=("GET", "POST"))
     def oauth_login():
         """Login page (GET) or initiate OAuth flow (POST)."""
-        # Preserve return_to across the login flow — only accept relative URLs
+        # Preserve return_to across the login flow — accept relative URLs or *.PLATFORM_DOMAIN
         return_to = request.args.get("return_to") or request.form.get("return_to", "")
-        if return_to and not return_to.startswith("/"):
-            return_to = ""  # reject absolute URLs (open redirect prevention)
+        if return_to and not _is_safe_return_url(return_to):
+            return_to = ""  # reject unsafe URLs (open redirect prevention)
+        # Always overwrite session to prevent stale MCP OAuth flow values
         if return_to:
             session["return_to"] = return_to
 
@@ -453,10 +465,10 @@ def create_app(
             display_name=display_name,
         )
 
-        # Check for a return_to URL (e.g., from MCP consent flow)
+        # Check for a return_to URL (e.g., from MCP consent flow or wiki redirect)
         return_to = session.pop("return_to", None)
-        # Reject absolute URLs stored in session (defense in depth)
-        if return_to and not return_to.startswith("/"):
+        # Defense in depth: reject unsafe URLs stored in session
+        if return_to and not _is_safe_return_url(return_to):
             return_to = None
         redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
 
@@ -544,10 +556,10 @@ def create_app(
             display_name=display_name,
         )
 
-        # Check for a return_to URL (e.g., from MCP consent flow)
+        # Check for a return_to URL (e.g., from MCP consent flow or wiki redirect)
         return_to = session.pop("return_to", None)
-        # Reject absolute URLs stored in session (defense in depth)
-        if return_to and not return_to.startswith("/"):
+        # Defense in depth: reject unsafe URLs stored in session
+        if return_to and not _is_safe_return_url(return_to):
             return_to = None
         redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
 

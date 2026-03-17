@@ -215,14 +215,17 @@ class TestBrowserRedirect:
         return calls
 
     def test_browser_gets_redirect_on_restricted_read_access(self):
-        """Browser visiting a READ_ACCESS=REGISTERED wiki is redirected to login."""
+        """Browser visiting a READ_ACCESS=REGISTERED wiki is redirected to login with return_to."""
         resolver = self._make_resolver(public=False)
         environ = _make_environ("gruen.robot.wtf", accept="text/html,application/xhtml+xml,*/*")
         calls = self._run_with_access_config(resolver, environ, public=False)
         assert len(calls) == 1
         status, headers = calls[0]
         assert status == "302 Found"
-        assert dict(headers)["Location"] == "https://robot.wtf/auth/login"
+        location = dict(headers)["Location"]
+        assert location.startswith("https://robot.wtf/auth/login")
+        assert "return_to=" in location
+        assert "gruen.robot.wtf" in location
 
     def test_api_gets_json_on_restricted_read_access(self):
         """Non-browser client visiting a READ_ACCESS=REGISTERED wiki gets 403 JSON."""
@@ -405,6 +408,90 @@ class TestBearerTokenBypassesRestrictions:
         assert "WRITE" in perms and "READ" in perms, (
             f"Bearer token permissions were incorrectly stripped: {perms!r}"
         )
+
+
+class TestLoginRedirectReturnTo:
+    """Resolver redirects include return_to with the original wiki URL."""
+
+    _private_config = {
+        "READ_ACCESS": "REGISTERED",
+        "WRITE_ACCESS": "ANONYMOUS",
+        "ATTACHMENT_ACCESS": "ANONYMOUS",
+    }
+
+    def _make_resolver(self):
+        from app.resolver import TenantResolver
+        from app.auth.acl import AclEnforcer
+        from app.auth.middleware import AuthMiddleware
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = None
+
+        acl_enforcer = MagicMock(spec=AclEnforcer)
+        acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "name": "Test Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 0,
+        }
+
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            acl_enforcer=acl_enforcer,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def _run_with_private_config(self, resolver, environ):
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=self._private_config):
+            start_response, calls = _capture_response()
+            resolver(environ, start_response)
+        return calls
+
+    def test_login_redirect_includes_return_to(self):
+        """Resolver redirects browser to login with return_to containing the wiki URL."""
+        resolver = self._make_resolver()
+        environ = _make_environ(
+            "gruen.robot.wtf",
+            path="/SomePage",
+            accept="text/html,application/xhtml+xml,*/*",
+        )
+        environ["wsgi.url_scheme"] = "https"
+        environ["QUERY_STRING"] = ""
+        calls = self._run_with_private_config(resolver, environ)
+        assert len(calls) == 1
+        status, headers = calls[0]
+        assert status == "302 Found"
+        location = dict(headers)["Location"]
+        assert "return_to=" in location
+        assert "gruen.robot.wtf" in location
+        assert "SomePage" in location
+
+    def test_login_redirect_includes_query_string(self):
+        """return_to includes the query string when present."""
+        resolver = self._make_resolver()
+        environ = _make_environ(
+            "gruen.robot.wtf",
+            path="/SomePage",
+            accept="text/html,application/xhtml+xml,*/*",
+        )
+        environ["wsgi.url_scheme"] = "https"
+        environ["QUERY_STRING"] = "edit=1"
+        calls = self._run_with_private_config(resolver, environ)
+        assert len(calls) == 1
+        location = dict(calls[0][1])["Location"]
+        assert "edit%3D1" in location or "edit=1" in location
 
 
 class TestPrivateWikiMigration:
