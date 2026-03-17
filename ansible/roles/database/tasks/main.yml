@@ -16,10 +16,9 @@
     sqlite3 /srv/data/robot.db < /tmp/robot_schema.sql
   changed_when: false
 
-- name: Invalidate legacy bcrypt token hashes
+- name: Invalidate non-SHA256 token hashes (bcrypt, placeholders, etc.)
   ansible.builtin.command:
-    cmd: sqlite3 /srv/data/robot.db "UPDATE wikis SET mcp_token_hash = 'invalidated:' || slug WHERE mcp_token_hash LIKE '$2b$%';"
-  register: bcrypt_migration
+    cmd: sqlite3 /srv/data/robot.db "UPDATE wikis SET mcp_token_hash = 'invalidated:' || slug WHERE length(mcp_token_hash) != 64 OR mcp_token_hash GLOB '*[^0-9a-f]*';"
   changed_when: false
 
 - name: Add unique index on mcp_token_hash
