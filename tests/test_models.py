@@ -188,9 +188,13 @@ class TestDefaultUsernameFromHandle:
     def test_reserved_admin(self):
         assert default_username_from_handle("admin.bsky.social") == ""
 
-    def test_not_reserved_user(self):
-        # "user" is not in RESERVED_USERNAMES so it passes through
-        assert default_username_from_handle("user.bsky.social") == "user"
+    def test_reserved_user(self):
+        # "user" is now in RESERVED_NAMES so it returns ""
+        assert default_username_from_handle("user.bsky.social") == ""
+
+    def test_reserved_mail(self):
+        # DNS-sensitive names are reserved
+        assert default_username_from_handle("mail.bsky.social") == ""
 
     def test_hyphen_handle(self):
         assert default_username_from_handle("a-b.bsky.social") == "a-b"

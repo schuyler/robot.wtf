@@ -14,11 +14,18 @@ from typing import Any
 # no leading/trailing hyphens
 _USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$")
 
-RESERVED_USERNAMES = frozenset({
+# Canonical set of reserved names — used for both usernames and wiki slugs.
+# Includes infrastructure subdomains and DNS-sensitive names that would
+# conflict if slugs become subdomains ({slug}.robot.wtf).
+RESERVED_NAMES = frozenset({
     "admin", "api", "app", "assets", "auth", "billing", "blog",
-    "dev", "docs", "help", "mcp", "null", "static", "status",
-    "support", "undefined", "wiki", "www",
+    "dev", "docs", "ftp", "git", "help", "imap", "mail", "mcp",
+    "ns", "ns1", "ns2", "null", "pop", "smtp", "ssh", "static",
+    "status", "support", "undefined", "user", "vpn", "wiki", "www",
 })
+
+# Keep old name as alias for backwards compatibility with any direct imports.
+RESERVED_USERNAMES = RESERVED_NAMES
 
 
 def validate_username(username: str) -> tuple[bool, str | None]:
@@ -39,7 +46,7 @@ def validate_username(username: str) -> tuple[bool, str | None]:
         if username.startswith("-") or username.endswith("-"):
             return False, "Username must not start or end with a hyphen"
         return False, "Username must contain only lowercase letters, digits, and hyphens"
-    if username in RESERVED_USERNAMES:
+    if username in RESERVED_NAMES:
         return False, "Username is reserved"
     return True, None
 
@@ -65,7 +72,7 @@ def default_username_from_handle(handle: str) -> str:
     # Truncate to 30 chars
     prefix = prefix[:30]
     # Return "" if the derived slug is reserved
-    if prefix in RESERVED_USERNAMES:
+    if prefix in RESERVED_NAMES:
         return ""
     return prefix
 
