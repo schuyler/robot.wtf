@@ -629,28 +629,20 @@ def create_app(
         handle = claims.get("handle", "")
         display_name = claims.get("name", handle)
 
-        # Check wiki membership: user must have access to the wiki (via ACL,
-        # owner_did, or public flag) before the consent form is shown.
+        # Check that the wiki exists. is_public is no longer used for gating;
+        # READ_ACCESS in wiki.db controls anonymous content access.
+        # Any authenticated user may consent to grant OAuth tokens for an
+        # existing wiki (access restrictions are enforced by the resolver).
         db = _get_db()
         enforcer = AclEnforcer(
             acl_model=AclModel(db),
             wiki_model=WikiModel(db),
         )
-        # First try public access; then try user-specific access
-        wiki_accessible = False
         try:
             enforcer.check_public_access(wiki_slug)
-            wiki_accessible = True
         except AuthError:
-            pass
-        if not wiki_accessible:
-            try:
-                enforcer.check_access(user_did, wiki_slug)
-                wiki_accessible = True
-            except AuthError:
-                pass
-        if not wiki_accessible:
-            abort(403, "You do not have access to this wiki")
+            # Only raises on 404 (wiki not found)
+            abort(403, "Wiki not found")
 
         # Look up client name from the MCP OAuth DB (best-effort)
         client_name = oauth_params.get("client_id", "Unknown client")

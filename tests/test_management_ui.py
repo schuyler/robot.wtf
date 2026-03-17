@@ -374,21 +374,29 @@ class TestWikiSettings:
         assert wiki["display_name"] == "New Name"
 
     @patch("app.api_server._init_wiki_repo")
-    def test_toggle_visibility(
+    def test_settings_update_ignores_is_public(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
+        """is_public is no longer written from the settings form.
+
+        READ_ACCESS in wiki.db is the sole gating mechanism for anonymous access.
+        Posting is_public=1 should not update the database field.
+        """
         client.set_cookie("platform_token", owner_token, domain="localhost")
         client.post(
             "/app/create",
             data={"slug": "vis-wiki", "display_name": "Vis Wiki"},
         )
-        # Toggle to public
-        client.post(
+        # Post is_public=1 — should be silently ignored
+        resp = client.post(
             "/app/wiki/vis-wiki/settings",
             data={"display_name": "Vis Wiki", "is_public": "1"},
+            follow_redirects=False,
         )
+        assert resp.status_code == 302
         wiki = wiki_model.get("vis-wiki")
-        assert wiki["is_public"] == 1
+        # is_public must not have been set to 1 — it should remain 0 (the schema default)
+        assert wiki["is_public"] == 0
 
     @patch("app.api_server._init_wiki_repo")
     def test_delete_wiki(

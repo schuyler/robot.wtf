@@ -334,12 +334,10 @@ def _create_flask_app() -> Flask:
             return redirect(url_for("dashboard"))
 
         display_name = request.form.get("display_name", "").strip()
-        is_public = request.form.get("is_public") == "1"
 
         updates = {}
         if display_name:
             updates["display_name"] = display_name
-        updates["is_public"] = int(is_public)
 
         wiki_model.update(slug, **updates)
         flash("Settings updated.", "success")

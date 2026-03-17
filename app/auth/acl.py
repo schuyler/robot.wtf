@@ -58,7 +58,11 @@ class AclEnforcer:
         raise AuthError("Access denied", status=403)
 
     def check_public_access(self, wiki_slug: str) -> dict[str, Any]:
-        """Check whether a wiki is publicly accessible.
+        """Grant anonymous READ access if the wiki exists.
+
+        The is_public flag is intentionally ignored. Per-wiki READ_ACCESS
+        preference (in wiki.db) is the sole gating mechanism for anonymous
+        access; see _apply_wiki_access_restrictions() in the resolver.
 
         Args:
             wiki_slug: The wiki slug.
@@ -67,13 +71,11 @@ class AclEnforcer:
             Dict with 'role' set to 'public' and 'permissions' containing READ.
 
         Raises:
-            AuthError: If the wiki is not found or not public.
+            AuthError: If the wiki is not found.
         """
         wiki = self._wikis.get(wiki_slug)
         if not wiki:
             raise AuthError("Wiki not found", status=404)
-        if not wiki.get("is_public", 0):
-            raise AuthError("Access denied", status=403)
 
         return {"role": "public", "permissions": (READ,)}
 
