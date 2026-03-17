@@ -85,7 +85,6 @@ def _init_wiki_db(db_path: str, site_name: str = None) -> None:
                 allow_write BOOLEAN DEFAULT 0,
                 allow_upload BOOLEAN DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS ix_user_email ON "user" (email);
             CREATE TABLE IF NOT EXISTS cache (
                 key VARCHAR(64) PRIMARY KEY,
                 value TEXT,
@@ -102,17 +101,24 @@ def _init_wiki_db(db_path: str, site_name: str = None) -> None:
     finally:
         conn.close()
 
+    os.chmod(db_path, 0o600)
     _initialized_dbs.add(db_path)
 
 
-def _swap_database(wiki_slug: str, wiki_dir: str) -> None:
+def _swap_database(wiki_dir: str) -> None:
     """Swap otterwiki's SQLAlchemy engine to the per-wiki SQLite DB."""
     db_path = os.path.join(wiki_dir, "wiki.db")
+
+    # Path validation: ensure db_path is under WIKI_BASE
+    real_path = os.path.realpath(db_path)
+    if not real_path.startswith(os.path.realpath(WIKI_BASE) + os.sep):
+        logger.error("wiki.db path escapes WIKI_BASE: %s", db_path)
+        return
 
     try:
         import otterwiki.server
         from sqlalchemy import create_engine
-    except (ImportError, SystemExit):
+    except ImportError:
         return
 
     app = otterwiki.server.app
@@ -129,25 +135,36 @@ def _swap_database(wiki_slug: str, wiki_dir: str) -> None:
     # Ensure DB exists with schema
     _init_wiki_db(db_path)
 
-    # Update config (for reference only — FSA ignores this post-init)
-    app.config["SQLALCHEMY_DATABASE_URI"] = uri
+    old_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
 
-    # Remove current scoped session
-    db.session.remove()
+    try:
+        # Remove current scoped session
+        db.session.remove()
 
-    # Dispose old engine and create new one
-    if current_engine is not None:
-        current_engine.dispose()
+        # Create new engine FIRST, then dispose old
+        new_engine = create_engine(
+            uri,
+            connect_args={"check_same_thread": False},
+        )
+        engines[None] = new_engine
 
-    new_engine = create_engine(
-        uri,
-        connect_args={"check_same_thread": False},
-    )
-    engines[None] = new_engine
+        # Now safe to dispose the old engine
+        if current_engine is not None:
+            current_engine.dispose()
 
-    # Reload preferences from the new DB (needs app context)
-    with app.app_context():
-        otterwiki.server.update_app_config()
+        # Update config (for reference only — FSA ignores this post-init)
+        app.config["SQLALCHEMY_DATABASE_URI"] = uri
+
+        # Reload preferences from the new DB (needs app context)
+        with app.app_context():
+            otterwiki.server.update_app_config()
+    except Exception:
+        # Restore previous engine if swap failed
+        if current_engine is not None:
+            engines[None] = current_engine
+            app.config["SQLALCHEMY_DATABASE_URI"] = old_uri
+        logger.exception("Failed to swap database for wiki %s", wiki_dir)
+        raise
 
 
 def _is_jwt(token: str) -> bool:
@@ -373,7 +390,7 @@ class TenantResolver:
         # Swap otterwiki globals
         self._swap_storage(repo_path)
         wiki_dir = os.path.dirname(repo_path)
-        _swap_database(wiki_slug, wiki_dir)
+        _swap_database(wiki_dir)
 
         # Inject proxy headers
         proxy_headers = auth_result["proxy_headers"]

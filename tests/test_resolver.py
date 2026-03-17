@@ -227,7 +227,8 @@ class TestBrowserRedirect:
         resolver = self._make_resolver(public=True)
         start_response, calls = _capture_response()
         environ = _make_environ("gruen.robot.wtf", accept="text/html,application/xhtml+xml,*/*")
-        with patch.object(resolver, "_swap_storage"):
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"):
             resolver(environ, start_response)
         assert len(calls) == 1
         status, _ = calls[0]

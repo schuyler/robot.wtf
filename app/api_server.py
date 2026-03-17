@@ -273,7 +273,10 @@ def _create_flask_app() -> Flask:
         # Initialize per-wiki database
         wiki_dir = os.path.join(wiki_base, slug)
         db_path = os.path.join(wiki_dir, "wiki.db")
-        _init_wiki_db(db_path, site_name=display_name)
+        try:
+            _init_wiki_db(db_path, site_name=display_name)
+        except Exception:
+            logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 
         # Increment wiki count
         user_model.update(user.user_did, wiki_count=wiki_count + 1)
