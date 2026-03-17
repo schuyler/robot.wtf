@@ -147,6 +147,10 @@ def _init_wiki_db(
             ("AUTO_APPROVAL", "False"),
             # Schema version marker for future migration detection.
             ("_schema_version", _SCHEMA_VERSION),
+            # Platform branding: default site icon and logo. Users can
+            # override per-wiki via the admin UI.
+            ("SITE_ICON", "https://robot.wtf/static/robot.wtf.svg"),
+            ("SITE_LOGO", "https://robot.wtf/static/robot.wtf.svg"),
         ]
         for name, value in platform_preferences:
             conn.execute(
