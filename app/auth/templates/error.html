@@ -3,7 +3,7 @@
 {% block title %}Error — robot.wtf{% endblock %}
 
 {% block content %}
-<article>
+<div class="auth-card">
   <h2>Error {{ status_code }}</h2>
   {% if err.description %}
   <p><code>{{ err.description }}</code></p>
@@ -11,5 +11,5 @@
   <p>Something went wrong.</p>
   {% endif %}
   <p><a href="/auth/login">Start Over</a></p>
-</article>
+</div>
 {% endblock %}

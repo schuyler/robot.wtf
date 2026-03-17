@@ -3,7 +3,7 @@
 {% block title %}Authorize — robot.wtf{% endblock %}
 
 {% block content %}
-<article>
+<div class="auth-card">
   <h3>Authorize Access</h3>
   <p><strong>{{ client_name }}</strong> is requesting access to <strong>{{ wiki_name }}</strong>.</p>
   {% if scopes %}
@@ -17,10 +17,10 @@
   <p>Signed in as <code>{{ handle }}</code></p>
   <form method="post">
     <input type="hidden" name="consent_token" value="{{ consent_token }}">
-    <div role="group">
+    <div class="btn-group">
       <button type="submit" name="action" value="approve">Approve</button>
-      <button type="submit" name="action" value="deny" class="secondary">Deny</button>
+      <button type="submit" name="action" value="deny" class="btn-secondary">Deny</button>
     </div>
   </form>
-</article>
+</div>
 {% endblock %}
