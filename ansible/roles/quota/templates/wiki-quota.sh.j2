@@ -1,6 +1,7 @@
 #!/bin/bash
-# robot.wtf per-wiki disk usage tracker.
-# Measures each wiki directory and updates disk_usage_bytes in the database.
+# robot.wtf per-wiki disk usage and page count tracker.
+# Measures each wiki directory and updates disk_usage_bytes and page_count
+# in the database. Runs every 15 minutes via cron.
 
 set -uo pipefail
 
@@ -10,7 +11,30 @@ WIKI_BASE="/srv/data/wikis"
 for wiki_dir in "$WIKI_BASE"/*/; do
     [ -d "$wiki_dir" ] || continue
     SLUG="$(basename "$wiki_dir")"
-    SIZE="$(du -sb "$wiki_dir" 2>/dev/null | cut -f1)"
+
+    # Validate slug contains only safe characters before interpolating into SQL.
+    # Slugs must be lowercase alphanumeric + hyphens (enforced at creation time).
+    if [[ ! "$SLUG" =~ ^[a-z0-9-]+$ ]]; then
+        echo "WARNING: skipping invalid slug: $SLUG" >&2
+        continue
+    fi
+
+    SIZE="$(du -sb "${wiki_dir%/}" 2>/dev/null | cut -f1)"
     [ -z "$SIZE" ] && continue
-    sqlite3 "$DB" "UPDATE wikis SET disk_usage_bytes=$SIZE WHERE slug='$SLUG';"
+
+    # Count .md files in wiki repo, excluding .git/ metadata.
+    # New wikis start with at least Home.md (scaffolded by _init_wiki_repo),
+    # so page_count >= 1 immediately after creation. This is expected.
+    #
+    # Attachment layout: otterwiki stores attachments in a directory named after
+    # the page (e.g., Home/ for Home.md). Attachments can have any extension,
+    # including .md. However, distinguishing attachment .md files from nested
+    # page .md files (e.g., Folder/SubPage.md) is not possible without walking
+    # the tree structure, and .md attachments are extremely rare in practice.
+    # No exclusion is applied; the count may be marginally high if .md
+    # attachments exist, but the error is bounded and acceptable.
+    PAGE_COUNT="$(find "${wiki_dir%/}/repo" -name "*.md" -not -path "*/.git/*" 2>/dev/null | wc -l)"
+    [ -z "$PAGE_COUNT" ] && continue
+
+    sqlite3 "$DB" "UPDATE wikis SET disk_usage_bytes=${SIZE}, page_count=${PAGE_COUNT} WHERE slug='${SLUG}';"
 done

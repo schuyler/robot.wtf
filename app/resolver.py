@@ -33,6 +33,7 @@ from urllib.parse import quote
 from app.auth.headers import build_proxy_headers
 from app.auth.middleware import AuthError, AuthMiddleware
 from app.auth.permissions import READ, WRITE, UPLOAD, ADMIN, format_permission_header
+from app.constants import MAX_PAGES_PER_WIKI, QUOTA_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +45,6 @@ _initialized_dbs: set = set()
 
 # Domain suffix for extracting wiki slug from Host header
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
-
-# Per-wiki disk quota
-QUOTA_BYTES = 50 * 1024 * 1024  # 50MB
 
 # Base path for wiki data
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
@@ -472,6 +470,7 @@ def _error_response(
         401: "401 Unauthorized",
         403: "403 Forbidden",
         404: "404 Not Found",
+        413: "413 Request Entity Too Large",
         500: "500 Internal Server Error",
     }
     status = status_map.get(status_code, f"{status_code} Error")
@@ -560,15 +559,19 @@ class TenantResolver:
         if not wiki:
             return _error_response(start_response, 404, "Wiki not found")
 
-        # Enforce disk quota on write requests
+        # Enforce disk and page quotas on write requests
         method = environ.get("REQUEST_METHOD", "GET")
         path = environ.get("PATH_INFO", "/")
-        over_quota = wiki.get("disk_usage_bytes", 0) > QUOTA_BYTES
+        over_disk_quota = wiki.get("disk_usage_bytes", 0) > QUOTA_BYTES
+        over_page_quota = wiki.get("page_count", 0) >= MAX_PAGES_PER_WIKI
+        over_quota = over_disk_quota or over_page_quota
         if over_quota and _is_write_request(method, path):
             if path.startswith("/api/"):
-                return _error_response(
-                    start_response, 413, "Wiki quota exceeded (50MB limit)"
-                )
+                if over_page_quota:
+                    msg = f"Page limit reached ({MAX_PAGES_PER_WIKI} pages)"
+                else:
+                    msg = "Wiki quota exceeded (50MB limit)"
+                return _error_response(start_response, 413, msg)
             # Web UI writes: continue to auth, then strip write permissions below
 
         # Build repo path

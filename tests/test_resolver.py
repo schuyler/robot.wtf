@@ -1410,3 +1410,167 @@ class TestBearerTokenWikiCrossCheck:
         assert status in ("403 Forbidden", "401 Unauthorized"), (
             f"Token from wiki-a on wiki-b should be denied; got {status}"
         )
+
+
+class TestPageCountQuota:
+    """Resolver enforces page_count quota alongside disk quota."""
+
+    _public_config = {
+        "READ_ACCESS": "ANONYMOUS",
+        "WRITE_ACCESS": "ANONYMOUS",
+        "ATTACHMENT_ACCESS": "ANONYMOUS",
+    }
+
+    def _make_resolver(self, page_count: int, disk_usage_bytes: int = 0):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        # Authenticate as the wiki owner so WRITE permissions are present
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did="did:plc:owner",
+            handle="owner.bsky.social",
+            display_name="Owner",
+            record={},
+        )
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "test-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "Test Wiki",
+            "disk_usage_bytes": disk_usage_bytes,
+            "page_count": page_count,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def _run(self, resolver, environ):
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=self._public_config):
+            start_response, calls = _capture_response()
+            resolver(environ, start_response)
+        return calls
+
+    def test_api_write_blocked_at_page_limit(self):
+        """API write returns 413 when page_count >= MAX_PAGES_PER_WIKI."""
+        from app.constants import MAX_PAGES_PER_WIKI
+
+        resolver = self._make_resolver(page_count=MAX_PAGES_PER_WIKI)
+        environ = _make_environ("test-wiki.robot.wtf", path="/api/v1/pages/NewPage")
+        environ["REQUEST_METHOD"] = "PUT"
+
+        calls = self._run(resolver, environ)
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "413 Request Entity Too Large", (
+            f"Expected 413 for page quota; got {status}"
+        )
+
+    def test_api_write_blocked_above_page_limit(self):
+        """API write returns 413 when page_count exceeds MAX_PAGES_PER_WIKI."""
+        from app.constants import MAX_PAGES_PER_WIKI
+
+        resolver = self._make_resolver(page_count=MAX_PAGES_PER_WIKI + 10)
+        environ = _make_environ("test-wiki.robot.wtf", path="/api/v1/pages/NewPage")
+        environ["REQUEST_METHOD"] = "POST"
+
+        calls = self._run(resolver, environ)
+        assert calls
+        status, _ = calls[0]
+        assert status == "413 Request Entity Too Large"
+
+    def test_api_write_allowed_under_page_limit(self):
+        """API write passes through when page_count < MAX_PAGES_PER_WIKI."""
+        from app.constants import MAX_PAGES_PER_WIKI
+
+        resolver = self._make_resolver(page_count=MAX_PAGES_PER_WIKI - 1)
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        resolver._app = capture_app
+        environ = _make_environ("test-wiki.robot.wtf", path="/api/v1/pages/NewPage")
+        environ["REQUEST_METHOD"] = "PUT"
+
+        calls = self._run(resolver, environ)
+        assert calls
+        status, _ = calls[0]
+        assert status == "200 OK", (
+            f"Write under page limit should pass through; got {status}"
+        )
+
+    def test_web_ui_write_strips_write_permission_at_page_limit(self):
+        """Web UI write strips WRITE and UPLOAD when page_count >= MAX_PAGES_PER_WIKI."""
+        from app.constants import MAX_PAGES_PER_WIKI
+
+        resolver = self._make_resolver(page_count=MAX_PAGES_PER_WIKI)
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        resolver._app = capture_app
+        # /SomePage/save is the web UI save path matched by _is_write_request
+        environ = _make_environ("test-wiki.robot.wtf", path="/SomePage/save")
+        environ["REQUEST_METHOD"] = "POST"
+        environ["HTTP_COOKIE"] = "platform_token=ownertoken"
+
+        calls = self._run(resolver, environ)
+        # Should reach the app (not 413), but with WRITE/UPLOAD stripped
+        perms = injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+        assert "WRITE" not in perms, (
+            f"WRITE should be stripped on page-limit web UI write; got {perms!r}"
+        )
+        assert "UPLOAD" not in perms, (
+            f"UPLOAD should be stripped on page-limit web UI write; got {perms!r}"
+        )
+
+    def test_web_ui_write_preserves_permissions_under_page_limit(self):
+        """Web UI write keeps WRITE and UPLOAD when page_count < MAX_PAGES_PER_WIKI."""
+        from app.constants import MAX_PAGES_PER_WIKI
+
+        resolver = self._make_resolver(page_count=MAX_PAGES_PER_WIKI - 1)
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        resolver._app = capture_app
+        # /SomePage/save is the web UI save path matched by _is_write_request
+        environ = _make_environ("test-wiki.robot.wtf", path="/SomePage/save")
+        environ["REQUEST_METHOD"] = "POST"
+        environ["HTTP_COOKIE"] = "platform_token=ownertoken"
+
+        calls = self._run(resolver, environ)
+        perms = injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+        assert "WRITE" in perms, (
+            f"WRITE should not be stripped under page limit; got {perms!r}"
+        )
+
+
+class TestConstantsImport:
+    """Constants module exports expected values."""
+
+    def test_constants_importable(self):
+        from app.constants import MAX_PAGES_PER_WIKI, QUOTA_BYTES
+        assert MAX_PAGES_PER_WIKI == 500
+        assert QUOTA_BYTES == 50 * 1024 * 1024
