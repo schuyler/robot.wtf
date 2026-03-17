@@ -227,8 +227,14 @@ class TestBrowserRedirect:
         resolver = self._make_resolver(public=True)
         start_response, calls = _capture_response()
         environ = _make_environ("gruen.robot.wtf", accept="text/html,application/xhtml+xml,*/*")
+        open_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
         with patch.object(resolver, "_swap_storage"), \
-             patch("app.resolver._swap_database"):
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=open_config):
             resolver(environ, start_response)
         assert len(calls) == 1
         status, _ = calls[0]
@@ -375,6 +381,6 @@ class TestBearerTokenBypassesRestrictions:
 
         perms = injected_environ.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
         # Bearer token must not have permissions stripped
-        assert "WRITE" in perms or "READ" in perms, (
+        assert "WRITE" in perms and "READ" in perms, (
             f"Bearer token permissions were incorrectly stripped: {perms!r}"
         )

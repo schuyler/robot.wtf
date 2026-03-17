@@ -198,12 +198,13 @@ def _get_wiki_access_config() -> dict[str, str]:
             "WRITE_ACCESS": app.config.get("WRITE_ACCESS", "ANONYMOUS"),
             "ATTACHMENT_ACCESS": app.config.get("ATTACHMENT_ACCESS", "ANONYMOUS"),
         }
-    except (ImportError, SystemExit, Exception):
+    except ImportError:
+        logger.warning("otterwiki not installed; wiki access config unavailable, defaulting to ANONYMOUS")
         return defaults
 
 
 def _apply_wiki_access_restrictions(
-    permissions: list[str], is_authenticated: bool
+    permissions: list[str], is_authenticated: bool, config: dict[str, str] | None = None
 ) -> list[str]:
     """Restrict proxy header permissions based on per-wiki access preferences.
 
@@ -217,7 +218,8 @@ def _apply_wiki_access_restrictions(
     """
     from app.auth.permissions import READ, WRITE, UPLOAD
 
-    config = _get_wiki_access_config()
+    if config is None:
+        config = _get_wiki_access_config()
     read_access = config.get("READ_ACCESS", "ANONYMOUS")
     write_access = config.get("WRITE_ACCESS", "ANONYMOUS")
     attachment_access = config.get("ATTACHMENT_ACCESS", "ANONYMOUS")
@@ -447,7 +449,7 @@ class TenantResolver:
         # Strip write permissions for web UI writes when over quota
         if over_quota and _is_write_request(method, path) and not path.startswith("/api/"):
             proxy_headers = auth_result["proxy_headers"]
-            perms_key = "X-Otterwiki-Permissions"
+            perms_key = "x-otterwiki-permissions"
             raw = proxy_headers.get(perms_key, "")
             stripped = [p for p in raw.split(",") if p not in (WRITE, UPLOAD)]
             proxy_headers[perms_key] = format_permission_header(stripped)
@@ -463,6 +465,9 @@ class TenantResolver:
         wiki_dir = os.path.dirname(repo_path)
         _swap_database(wiki_dir)
 
+        # Fetch wiki access config once (after storage swap so preferences are loaded)
+        wiki_access_config = _get_wiki_access_config()
+
         # Apply per-wiki access restrictions based on preferences now loaded
         # into app.config. Bearer tokens (MCP clients) bypass restrictions.
         if not auth_result.get("is_bearer_token"):
@@ -471,7 +476,7 @@ class TenantResolver:
             raw = proxy_headers.get(perms_key, "")
             permissions = [p for p in raw.split(",") if p]
             is_authenticated = auth_result.get("is_authenticated", False)
-            restricted = _apply_wiki_access_restrictions(permissions, is_authenticated)
+            restricted = _apply_wiki_access_restrictions(permissions, is_authenticated, wiki_access_config)
             proxy_headers[perms_key] = format_permission_header(restricted)
 
         # If READ_ACCESS requires authentication and anonymous user: deny
@@ -479,11 +484,10 @@ class TenantResolver:
             proxy_headers = auth_result["proxy_headers"]
             perms_key = "x-otterwiki-permissions"
             raw = proxy_headers.get(perms_key, "")
-            if not raw or all(p not in ("READ", "WRITE", "UPLOAD") for p in raw.split(",")):
+            if not raw or all(p not in (READ, WRITE, UPLOAD) for p in raw.split(",")):
                 # No meaningful permissions remain after restrictions — check if
                 # this is because READ_ACCESS is restricted
-                config = _get_wiki_access_config()
-                if config.get("READ_ACCESS", "ANONYMOUS") != "ANONYMOUS":
+                if wiki_access_config.get("READ_ACCESS", "ANONYMOUS") != "ANONYMOUS":
                     if _is_browser_request(environ):
                         login_url = f"https://{PLATFORM_DOMAIN}/auth/login"
                         return _redirect_response(start_response, login_url)
