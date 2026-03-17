@@ -57,5 +57,5 @@ def sample_wiki(wiki_model, sample_user):
         owner_did="did:plc:abc123",
         display_name="Test Wiki",
         repo_path="/srv/data/wikis/test-wiki/repo",
-        mcp_token_hash="$2b$12$fakehashfortest000000000000000000000000000000000000",
+        mcp_token_hash="a" * 64,
     )

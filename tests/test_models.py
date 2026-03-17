@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 import sqlite3
 
-import bcrypt
 import pytest
 
 from app.models.acl import AclModel
@@ -187,7 +188,7 @@ class TestWikiModel:
             owner_did="did:plc:abc123",
             display_name="My Wiki",
             repo_path="/srv/data/wikis/my-wiki/repo",
-            mcp_token_hash="$2b$12$somehash",
+            mcp_token_hash="a" * 64,
         )
         assert wiki["slug"] == "my-wiki"
         assert wiki["owner_did"] == "did:plc:abc123"
@@ -208,14 +209,14 @@ class TestWikiModel:
             owner_did="did:plc:abc123",
             display_name="Wiki A",
             repo_path="/srv/data/wikis/wiki-a/repo",
-            mcp_token_hash="$2b$12$hash1",
+            mcp_token_hash="b" * 64,
         )
         wiki_model.create(
             slug="wiki-b",
             owner_did="did:plc:abc123",
             display_name="Wiki B",
             repo_path="/srv/data/wikis/wiki-b/repo",
-            mcp_token_hash="$2b$12$hash2",
+            mcp_token_hash="c" * 64,
         )
         wikis = wiki_model.list_by_owner("did:plc:abc123")
         assert len(wikis) == 2
@@ -228,7 +229,7 @@ class TestWikiModel:
             owner_did="did:plc:abc123",
             display_name="Original",
             repo_path="/srv/data/wikis/upd-wiki/repo",
-            mcp_token_hash="$2b$12$hash3",
+            mcp_token_hash="d" * 64,
         )
         updated = wiki_model.update("upd-wiki", display_name="Updated")
         assert updated["display_name"] == "Updated"
@@ -243,7 +244,7 @@ class TestWikiModel:
             owner_did="did:plc:abc123",
             display_name="Delete Me",
             repo_path="/srv/data/wikis/del-wiki/repo",
-            mcp_token_hash="$2b$12$hash4",
+            mcp_token_hash="e" * 64,
         )
         assert wiki_model.get("del-wiki") is not None
         wiki_model.delete("del-wiki")
@@ -255,7 +256,7 @@ class TestWikiModel:
             owner_did="did:plc:abc123",
             display_name="First",
             repo_path="/srv/data/wikis/unique-wiki/repo",
-            mcp_token_hash="$2b$12$hash5",
+            mcp_token_hash="f" * 64,
         )
         with pytest.raises(sqlite3.IntegrityError):
             wiki_model.create(
@@ -263,7 +264,7 @@ class TestWikiModel:
                 owner_did="did:plc:abc123",
                 display_name="Second",
                 repo_path="/srv/data/wikis/unique-wiki2/repo",
-                mcp_token_hash="$2b$12$hash6",
+                mcp_token_hash="0" * 64,
             )
 
     def test_foreign_key_enforcement(self, wiki_model):
@@ -274,28 +275,40 @@ class TestWikiModel:
                 owner_did="did:plc:nonexistent",
                 display_name="Orphan",
                 repo_path="/srv/data/wikis/orphan-wiki/repo",
-                mcp_token_hash="$2b$12$hash7",
+                mcp_token_hash="1" * 64,
             )
 
-    def test_scan_by_token(self, wiki_model, sample_user):
-        plaintext = "test-token-123"
-        hashed = bcrypt.hashpw(
-            plaintext.encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
+    def test_get_by_token(self, wiki_model, sample_user):
+        plaintext = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
 
         wiki_model.create(
             slug="token-wiki",
             owner_did="did:plc:abc123",
             display_name="Token Wiki",
             repo_path="/srv/data/wikis/token-wiki/repo",
-            mcp_token_hash=hashed,
+            mcp_token_hash=token_hash,
         )
 
-        found = wiki_model.scan_by_token(plaintext)
+        found = wiki_model.get_by_token(plaintext)
         assert found is not None
         assert found["slug"] == "token-wiki"
 
-        assert wiki_model.scan_by_token("wrong-token") is None
+        assert wiki_model.get_by_token("wrong-token") is None
+
+    def test_sentinel_token_does_not_match(self, wiki_model, sample_user):
+        """A wiki with a sentinel invalidated hash should not match any token lookup."""
+        wiki_model.create(
+            slug="invalidated-wiki",
+            owner_did="did:plc:abc123",
+            display_name="Invalidated Wiki",
+            repo_path="/srv/data/wikis/invalidated-wiki/repo",
+            mcp_token_hash="invalidated:invalidated-wiki",
+        )
+
+        # Any plaintext token lookup must not match the sentinel
+        assert wiki_model.get_by_token("invalidated:invalidated-wiki") is None
+        assert wiki_model.get_by_token("some-random-token") is None
 
 
 # --- AclModel ---
@@ -364,7 +377,7 @@ class TestAclModel:
             owner_did="did:plc:owner1",
             display_name="Shared Wiki",
             repo_path="/srv/data/wikis/shared-wiki/repo",
-            mcp_token_hash="$2b$12$hash8",
+            mcp_token_hash="2" * 64,
         )
         acl_model.create(
             wiki_slug="shared-wiki",
@@ -401,3 +414,31 @@ class TestAclModel:
                 role="viewer",
                 granted_by="did:plc:abc123",
             )
+
+
+# --- generate_mcp_token ---
+
+
+class TestGenerateMcpToken:
+    def test_returns_tuple(self):
+        from app.management.token import generate_mcp_token
+
+        result = generate_mcp_token()
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_hash_is_64_char_hex(self):
+        from app.management.token import generate_mcp_token
+
+        plaintext, token_hash = generate_mcp_token()
+        assert len(token_hash) == 64
+        assert all(c in "0123456789abcdef" for c in token_hash)
+        # No bcrypt prefix
+        assert not token_hash.startswith("$2b$")
+
+    def test_hash_matches_plaintext(self):
+        from app.management.token import generate_mcp_token
+
+        plaintext, token_hash = generate_mcp_token()
+        expected = hashlib.sha256(plaintext.encode()).hexdigest()
+        assert token_hash == expected
