@@ -65,6 +65,8 @@ from app.auth.consent import (
     sign_token as sign_consent_token,
     verify_token as verify_consent_token,
 )
+import jwt as pyjwt
+
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthError
 from app.db import get_connection, init_schema
@@ -253,12 +255,50 @@ def create_app(
         return_to = request.args.get("return_to") or request.form.get("return_to", "")
         if return_to and not _is_safe_return_url(return_to):
             return_to = ""  # reject unsafe URLs (open redirect prevention)
-        # Always overwrite session to prevent stale MCP OAuth flow values
-        if return_to:
-            session["return_to"] = return_to
 
         if request.method != "POST":
-            return render_template("login.html", return_to=return_to)
+            # Check for existing valid JWT — auto-redirect if still valid
+            cookie_token = request.cookies.get(COOKIE_NAME)
+            prefill_handle = ""
+            if cookie_token:
+                try:
+                    platform_jwt.validate_token(cookie_token)
+                    # Valid JWT — redirect immediately
+                    # Clear all auth-flow session keys to prevent stale state
+                    for key in ("return_to", "pending_did", "pending_handle",
+                                "csrf_nonces", "signup_state"):
+                        session.pop(key, None)
+                    redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
+                    return redirect(redirect_target)
+                except pyjwt.ExpiredSignatureError:
+                    # Expired — extract handle for pre-fill (display-only, untrusted)
+                    try:
+                        expired_claims = pyjwt.decode(
+                            cookie_token,
+                            options={
+                                "verify_signature": False,
+                                "verify_exp": False,
+                                "verify_iss": False,
+                                "verify_aud": False,
+                            },
+                            algorithms=["RS256"],
+                        )
+                        raw_handle = expired_claims.get("handle", "")
+                        # Display-only, untrusted — cap length and strip non-printable chars
+                        prefill_handle = re.sub(r"[^\x20-\x7e]", "", raw_handle)[:253]
+                    except Exception:
+                        pass  # garbage token — fall through to normal form
+                except Exception:
+                    pass  # invalid token — fall through to normal form
+
+            # No valid JWT — store return_to in session for post-OAuth redirect
+            if return_to:
+                session["return_to"] = return_to
+            return render_template("login.html", return_to=return_to, prefill_handle=prefill_handle)
+
+        # POST branch — store return_to in session for callback
+        if return_to:
+            session["return_to"] = return_to
 
         username = request.form.get("username", "").strip()
 
