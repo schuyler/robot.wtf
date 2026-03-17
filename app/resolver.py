@@ -121,13 +121,15 @@ def _init_wiki_db(db_path: str, site_name: str = None, is_public: bool = True) -
     _initialized_dbs.add(db_path)
 
 
-def _swap_database(wiki_dir: str, is_public: bool = True) -> None:
+def _swap_database(wiki_dir: str, is_public: bool = True, display_name: str = None) -> None:
     """Swap otterwiki's SQLAlchemy engine to the per-wiki SQLite DB.
 
     Args:
         wiki_dir: Directory containing wiki.db.
         is_public: Passed through to _init_wiki_db to seed READ_ACCESS
             for wikis that were previously marked private via is_public=0.
+        display_name: Wiki display name, seeded as SITE_NAME preference on
+            first init so the wiki shows its own name from the start.
     """
     db_path = os.path.join(wiki_dir, "wiki.db")
 
@@ -154,8 +156,8 @@ def _swap_database(wiki_dir: str, is_public: bool = True) -> None:
     if current_engine is not None and str(current_engine.url) == uri:
         return
 
-    # Ensure DB exists with schema (seeds READ_ACCESS for private wikis)
-    _init_wiki_db(db_path, is_public=is_public)
+    # Ensure DB exists with schema (seeds SITE_NAME and READ_ACCESS for private wikis)
+    _init_wiki_db(db_path, site_name=display_name, is_public=is_public)
 
     old_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
 
@@ -498,7 +500,7 @@ class TenantResolver:
         self._swap_storage(repo_path)
         wiki_dir = os.path.dirname(repo_path)
         wiki_is_public = bool(wiki.get("is_public", True))
-        _swap_database(wiki_dir, is_public=wiki_is_public)
+        _swap_database(wiki_dir, is_public=wiki_is_public, display_name=wiki.get("display_name"))
 
         # Fetch wiki access config once (after storage swap so preferences are loaded)
         wiki_access_config = _get_wiki_access_config()

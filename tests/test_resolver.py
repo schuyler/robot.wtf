@@ -494,6 +494,145 @@ class TestLoginRedirectReturnTo:
         assert "edit%3D1" in location or "edit=1" in location
 
 
+class TestLazyInitSiteName:
+    """Verify that lazy DB init seeds SITE_NAME from the wiki's display_name.
+
+    When _swap_database() is called for a wiki that has no wiki.db yet,
+    it should seed SITE_NAME from display_name so the wiki shows its own
+    name rather than whatever was loaded from a previous request.
+    """
+
+    def _make_resolver(self, display_name=None):
+        from app.resolver import TenantResolver
+        from app.auth.acl import AclEnforcer
+        from app.auth.middleware import AuthMiddleware
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = None
+
+        acl_enforcer = MagicMock(spec=AclEnforcer)
+        acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
+
+        wiki_model = MagicMock()
+        wiki_record = {
+            "name": "test-wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        if display_name is not None:
+            wiki_record["display_name"] = display_name
+        wiki_model.get.return_value = wiki_record
+
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            acl_enforcer=acl_enforcer,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def test_swap_database_called_with_display_name(self):
+        """TenantResolver.__call__ passes display_name to _swap_database."""
+        resolver = self._make_resolver(display_name="My Fancy Wiki")
+        environ = _make_environ("test-wiki.robot.wtf")
+        start_response, calls = _capture_response()
+
+        public_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database") as mock_swap_db, \
+             patch("app.resolver._get_wiki_access_config", return_value=public_config):
+            resolver(environ, start_response)
+
+        mock_swap_db.assert_called_once()
+        _, kwargs = mock_swap_db.call_args
+        assert kwargs.get("display_name") == "My Fancy Wiki", (
+            f"_swap_database was not called with display_name='My Fancy Wiki'; "
+            f"got kwargs={kwargs!r}"
+        )
+
+    def test_swap_database_display_name_none_when_not_in_wiki(self):
+        """TenantResolver passes display_name=None when wiki record has no display_name."""
+        resolver = self._make_resolver(display_name=None)
+        environ = _make_environ("test-wiki.robot.wtf")
+        start_response, calls = _capture_response()
+
+        public_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database") as mock_swap_db, \
+             patch("app.resolver._get_wiki_access_config", return_value=public_config):
+            resolver(environ, start_response)
+
+        mock_swap_db.assert_called_once()
+        _, kwargs = mock_swap_db.call_args
+        assert kwargs.get("display_name") is None
+
+    def test_swap_database_passes_display_name_to_init_wiki_db(self, tmp_path):
+        """_swap_database passes display_name through to _init_wiki_db as site_name.
+
+        We mock the otterwiki imports and engine state so _swap_database reaches
+        the _init_wiki_db call, then verify it receives site_name=display_name.
+        """
+        import os
+        import sys
+        import types
+        from app.resolver import _initialized_dbs
+
+        wiki_dir = str(tmp_path / "wikis" / "test-wiki")
+        os.makedirs(wiki_dir)
+
+        # Build minimal otterwiki.server stub
+        mock_app = MagicMock()
+        mock_app.config = {}
+        mock_engine = MagicMock()
+        mock_engine.url = MagicMock()
+        mock_engine.url.__str__ = lambda self: "sqlite:///other.db"
+        mock_db = MagicMock()
+        mock_db._app_engines = {mock_app: {None: mock_engine}}
+
+        mock_server_mod = types.ModuleType("otterwiki.server")
+        mock_server_mod.app = mock_app
+        mock_server_mod.db = mock_db
+        mock_server_mod.update_app_config = MagicMock()
+
+        mock_otterwiki = types.ModuleType("otterwiki")
+        mock_create_engine = MagicMock(return_value=MagicMock())
+
+        # Also make otterwiki.server accessible as an attribute on the otterwiki stub
+        mock_otterwiki.server = mock_server_mod
+
+        with patch.dict(sys.modules, {
+                "otterwiki": mock_otterwiki,
+                "otterwiki.server": mock_server_mod,
+             }), \
+             patch("app.resolver.WIKI_BASE", str(tmp_path / "wikis")), \
+             patch("app.resolver._init_wiki_db") as mock_init_db, \
+             patch("sqlalchemy.create_engine", mock_create_engine):
+            from app.resolver import _swap_database
+            _swap_database(wiki_dir, display_name="My Fancy Wiki")
+
+        assert mock_init_db.called, "_init_wiki_db was not called by _swap_database"
+        _, kwargs = mock_init_db.call_args
+        assert kwargs.get("site_name") == "My Fancy Wiki", (
+            f"_init_wiki_db not called with site_name='My Fancy Wiki'; got {kwargs!r}"
+        )
+
+
 class TestPrivateWikiMigration:
     """Verify that wikis with is_public=0 remain private after the migration.
 
