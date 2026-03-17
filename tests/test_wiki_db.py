@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from app.resolver import _init_wiki_db, _initialized_dbs
+from app.resolver import _init_wiki_db, _initialized_dbs, _SCHEMA_VERSION
 
 # The full set of preferences that _init_wiki_db should seed on every init.
 # These are the access-control preferences that Otterwiki reads from the DB
@@ -18,6 +18,7 @@ EXPECTED_SEEDED_PREFERENCES = {
     "ATTACHMENT_ACCESS",
     "AUTH_METHOD",
     "DISABLE_REGISTRATION",
+    "AUTO_APPROVAL",
     "_schema_version",
 }
 
@@ -243,11 +244,10 @@ def test_init_preserves_existing_preferences(db_path):
 
 
 def test_init_schema_version_present(db_path):
-    """_schema_version key must be present after init."""
+    """_schema_version key must be present and match the module constant."""
     _init_wiki_db(db_path)
     version = _get_preference(db_path, "_schema_version")
-    assert version is not None
-    assert len(version) > 0
+    assert version == _SCHEMA_VERSION
 
 
 def test_init_access_defaults_are_registered(db_path):
@@ -268,3 +268,17 @@ def test_init_disable_registration_is_true(db_path):
     """DISABLE_REGISTRATION should be seeded True for platform wikis."""
     _init_wiki_db(db_path)
     assert _get_preference(db_path, "DISABLE_REGISTRATION") == "True"
+
+
+def test_init_auto_approval_is_false(db_path):
+    """AUTO_APPROVAL should be seeded False as a safety net against open registration."""
+    _init_wiki_db(db_path)
+    assert _get_preference(db_path, "AUTO_APPROVAL") == "False"
+
+
+def test_init_owner_name_none_fallback(db_path):
+    """When owner_name=None, the name is derived from the first segment of owner_handle."""
+    _init_wiki_db(db_path, owner_handle="alice.bsky.social", owner_name=None)
+    user = _get_user(db_path, "@alice.bsky.social")
+    assert user is not None
+    assert user["name"] == "alice"

@@ -141,6 +141,10 @@ def _init_wiki_db(
             # by the platform, not by otterwiki's own registration flow.
             ("AUTH_METHOD", "PROXY_HEADER"),
             ("DISABLE_REGISTRATION", "True"),
+            # Safety net: otterwiki defaults AUTO_APPROVAL=True. If
+            # DISABLE_REGISTRATION ever fails to apply, this prevents open
+            # registration from silently auto-approving new accounts.
+            ("AUTO_APPROVAL", "False"),
             # Schema version marker for future migration detection.
             ("_schema_version", _SCHEMA_VERSION),
         ]
@@ -182,8 +186,8 @@ def _swap_database(wiki_dir: str, is_public: bool = True, display_name: str = No
 
     Args:
         wiki_dir: Directory containing wiki.db.
-        is_public: Passed through to _init_wiki_db to seed READ_ACCESS
-            for wikis that were previously marked private via is_public=0.
+        is_public: Unused. Kept for call-site compatibility. Access defaults
+            are now always seeded via the comprehensive seed list in _init_wiki_db.
         display_name: Wiki display name, seeded as SITE_NAME preference on
             first init so the wiki shows its own name from the start.
     """
