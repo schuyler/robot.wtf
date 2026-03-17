@@ -6,3 +6,24 @@
   roles:
     - database
     - deploy
+
+  post_tasks:
+    - name: Copy smoke test script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/roles/deploy/files/smoke-test.sh"
+        dest: /tmp/robot-smoke-test.sh
+        mode: "0755"
+
+    - name: Run post-deploy smoke test
+      ansible.builtin.command: /tmp/robot-smoke-test.sh
+      register: smoke_result
+      changed_when: false
+
+    - name: Show smoke test results
+      ansible.builtin.debug:
+        var: smoke_result.stdout_lines
+
+    - name: Fail deploy if smoke test failed
+      ansible.builtin.fail:
+        msg: "Smoke test failed. See output above."
+      when: smoke_result.rc != 0
