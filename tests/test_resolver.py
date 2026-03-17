@@ -3,11 +3,12 @@
 Covers:
 - Non-tenant hosts must NOT receive ADMIN permissions (ACL bypass)
 - Wiki tenant resolution and passthrough
+- Per-wiki access restrictions (READ_ACCESS, WRITE_ACCESS, ATTACHMENT_ACCESS)
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def _make_environ(host: str, path: str = "/", accept: str = "") -> dict:
@@ -223,13 +224,163 @@ class TestBrowserRedirect:
         assert status == "403 Forbidden"
 
     def test_public_wiki_browser_passes_through(self):
-        from unittest.mock import patch
         resolver = self._make_resolver(public=True)
         start_response, calls = _capture_response()
         environ = _make_environ("gruen.robot.wtf", accept="text/html,application/xhtml+xml,*/*")
+        open_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
         with patch.object(resolver, "_swap_storage"), \
-             patch("app.resolver._swap_database"):
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=open_config):
             resolver(environ, start_response)
         assert len(calls) == 1
         status, _ = calls[0]
         assert status == "200 OK"
+
+
+class TestWikiAccessRestrictions:
+    """Unit tests for _apply_wiki_access_restrictions."""
+
+    def _call(self, permissions, is_authenticated, config_overrides=None):
+        """Helper: call _apply_wiki_access_restrictions with a mocked app.config."""
+        from app.resolver import _apply_wiki_access_restrictions
+
+        default_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        if config_overrides:
+            default_config.update(config_overrides)
+
+        with patch("app.resolver._get_wiki_access_config", return_value=default_config):
+            return _apply_wiki_access_restrictions(list(permissions), is_authenticated)
+
+    def test_anonymous_allowed_read_access_anonymous(self):
+        """READ_ACCESS=ANONYMOUS, unauthenticated user: READ permission preserved."""
+        result = self._call(["READ", "WRITE"], is_authenticated=False,
+                            config_overrides={"READ_ACCESS": "ANONYMOUS"})
+        assert "READ" in result
+
+    def test_registered_strips_read_for_unauthenticated(self):
+        """READ_ACCESS=REGISTERED, unauthenticated: READ, WRITE, UPLOAD all stripped."""
+        result = self._call(["READ", "WRITE", "UPLOAD"], is_authenticated=False,
+                            config_overrides={"READ_ACCESS": "REGISTERED"})
+        assert "READ" not in result
+        assert "WRITE" not in result
+        assert "UPLOAD" not in result
+
+    def test_registered_keeps_read_for_authenticated(self):
+        """READ_ACCESS=REGISTERED, authenticated: permissions unchanged."""
+        perms = ["READ", "WRITE", "UPLOAD"]
+        result = self._call(perms, is_authenticated=True,
+                            config_overrides={"READ_ACCESS": "REGISTERED"})
+        assert "READ" in result
+        assert "WRITE" in result
+        assert "UPLOAD" in result
+
+    def test_write_restricted_unauthenticated_strips_write_upload(self):
+        """WRITE_ACCESS=REGISTERED, unauthenticated: WRITE and UPLOAD stripped but READ kept."""
+        result = self._call(["READ", "WRITE", "UPLOAD"], is_authenticated=False,
+                            config_overrides={"WRITE_ACCESS": "REGISTERED"})
+        assert "READ" in result
+        assert "WRITE" not in result
+        assert "UPLOAD" not in result
+
+    def test_attachment_restricted_unauthenticated_strips_upload_only(self):
+        """ATTACHMENT_ACCESS=REGISTERED, unauthenticated: UPLOAD stripped, READ and WRITE kept."""
+        result = self._call(["READ", "WRITE", "UPLOAD"], is_authenticated=False,
+                            config_overrides={"ATTACHMENT_ACCESS": "REGISTERED"})
+        assert "READ" in result
+        assert "WRITE" in result
+        assert "UPLOAD" not in result
+
+    def test_admin_never_stripped(self):
+        """ADMIN permission is never removed regardless of access settings."""
+        result = self._call(["READ", "WRITE", "UPLOAD", "ADMIN"], is_authenticated=False,
+                            config_overrides={
+                                "READ_ACCESS": "REGISTERED",
+                                "WRITE_ACCESS": "REGISTERED",
+                                "ATTACHMENT_ACCESS": "REGISTERED",
+                            })
+        assert "ADMIN" in result
+
+    def test_approved_treated_as_registered(self):
+        """APPROVED access level behaves like REGISTERED: strips access for unauthenticated."""
+        result = self._call(["READ", "WRITE", "UPLOAD"], is_authenticated=False,
+                            config_overrides={"READ_ACCESS": "APPROVED"})
+        assert "READ" not in result
+        assert "WRITE" not in result
+        assert "UPLOAD" not in result
+
+    def test_approved_keeps_perms_for_authenticated(self):
+        """APPROVED access level: authenticated users keep their permissions."""
+        result = self._call(["READ", "WRITE", "UPLOAD"], is_authenticated=True,
+                            config_overrides={"READ_ACCESS": "APPROVED"})
+        assert "READ" in result
+
+
+class TestBearerTokenBypassesRestrictions:
+    """MCP bearer tokens bypass per-wiki access restrictions."""
+
+    def _make_resolver(self):
+        from app.resolver import TenantResolver
+        from app.auth.acl import AclEnforcer
+        from app.auth.middleware import AuthMiddleware
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        acl_enforcer = MagicMock(spec=AclEnforcer)
+        acl_enforcer.check_bearer_token.return_value = {
+            "permissions": ["READ", "WRITE", "UPLOAD"],
+        }
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {"name": "Test Wiki", "disk_usage_bytes": 0}
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            acl_enforcer=acl_enforcer,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def test_bearer_token_bypasses_restrictions(self):
+        """MCP bearer tokens get full access regardless of wiki access preferences."""
+        resolver = self._make_resolver()
+        injected_environ = {}
+
+        def capture_app(environ, start_response):
+            injected_environ.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        resolver._app = capture_app
+        start_response, calls = _capture_response()
+        environ = _make_environ("gruen.robot.wtf")
+        environ["HTTP_AUTHORIZATION"] = "Bearer opaque-mcp-token"
+
+        restrictive_config = {
+            "READ_ACCESS": "REGISTERED",
+            "WRITE_ACCESS": "REGISTERED",
+            "ATTACHMENT_ACCESS": "REGISTERED",
+        }
+
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=restrictive_config):
+            resolver(environ, start_response)
+
+        perms = injected_environ.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+        # Bearer token must not have permissions stripped
+        assert "WRITE" in perms and "READ" in perms, (
+            f"Bearer token permissions were incorrectly stripped: {perms!r}"
+        )
