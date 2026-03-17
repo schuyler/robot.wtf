@@ -81,10 +81,6 @@ def _create_flask_app() -> Flask:
     )
     app = Flask(__name__, template_folder=template_dir, static_folder=None)
 
-    # Trust one X-Forwarded-For hop (set by Caddy) so Flask sees the real client IP
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-
     # Secret key for Flask session — must be set in production
     secret_key = os.environ.get("FLASK_SECRET_KEY", "")
     if not secret_key or secret_key.startswith("dev-secret"):
@@ -109,10 +105,18 @@ def _create_flask_app() -> Flask:
     @app.errorhandler(429)
     def ratelimit_handler(e):
         if request.accept_mimetypes.best == "application/json":
-            return jsonify(error="Rate limit exceeded"), 429
-        return render_template_string(
-            "<h1>Too Many Requests</h1><p>Please slow down and try again later.</p>"
-        ), 429
+            resp = jsonify(error="Rate limit exceeded")
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "60"
+            return resp
+        resp = make_response(
+            render_template_string(
+                "<h1>Too Many Requests</h1><p>Please slow down and try again later.</p>"
+            ),
+            429,
+        )
+        resp.headers["Retry-After"] = "60"
+        return resp
 
     # --- Static / Landing ---
 
@@ -323,6 +327,7 @@ def _create_flask_app() -> Flask:
         )
 
     @app.route("/app/wiki/<slug>/settings", methods=["POST"])
+    @limiter.limit("5/minute")
     def wiki_settings_update(slug):
         """Update wiki settings (display name)."""
         result = _require_login(app)
@@ -395,6 +400,7 @@ def _create_flask_app() -> Flask:
         return redirect(url_for("dashboard"))
 
     @app.route("/app/wiki/<slug>/mcp/regenerate", methods=["POST"])
+    @limiter.limit("2/minute")
     def mcp_regenerate(slug):
         """Regenerate MCP bearer token."""
         result = _require_login(app)
@@ -517,6 +523,11 @@ def _build_app():
         user_model=user_model,
         wiki_model=wiki_model,
     )
+
+    # Trust one X-Forwarded-For hop (set by Caddy) at the outermost WSGI layer
+    # so all middleware (including ManagementMiddleware) sees the corrected REMOTE_ADDR
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    wsgi_app = ProxyFix(wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     return wsgi_app
 

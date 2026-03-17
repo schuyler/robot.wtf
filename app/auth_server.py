@@ -638,7 +638,7 @@ def create_app(
         return f"{base}?{query}"
 
     @app.route("/auth/oauth/consent", methods=("GET", "POST"))
-    @limiter.limit("2/minute")
+    @limiter.limit("2/minute", methods=["POST"])
     def oauth_consent():
         """MCP OAuth consent page.
 
@@ -849,10 +849,18 @@ def create_app(
     @app.errorhandler(429)
     def ratelimit_handler(e):
         if request.accept_mimetypes.best == "application/json":
-            return jsonify(error="Rate limit exceeded"), 429
-        return render_template_string(
-            "<h1>Too Many Requests</h1><p>Please slow down and try again later.</p>"
-        ), 429
+            resp = jsonify(error="Rate limit exceeded")
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "60"
+            return resp
+        resp = make_response(
+            render_template_string(
+                "<h1>Too Many Requests</h1><p>Please slow down and try again later.</p>"
+            ),
+            429,
+        )
+        resp.headers["Retry-After"] = "60"
+        return resp
 
     @app.errorhandler(500)
     def internal_server_error(e):

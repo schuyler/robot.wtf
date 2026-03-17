@@ -8,11 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_client_ip(environ):
-    """Extract client IP from WSGI environ, trusting one X-Forwarded-For hop."""
-    forwarded = environ.get("HTTP_X_FORWARDED_FOR", "")
-    if forwarded:
-        # Trust the last entry (appended by Caddy)
-        return forwarded.rsplit(",", 1)[-1].strip()
+    """Extract client IP from WSGI environ. Expects ProxyFix to have already corrected REMOTE_ADDR."""
     return environ.get("REMOTE_ADDR", "127.0.0.1")
 
 
@@ -45,5 +41,5 @@ class WSGIRateLimiter:
             body = f"<h1>429 Too Many Requests</h1><p>{message}</p>"
             content_type = "text/html"
         return ("429 Too Many Requests",
-                [("Content-Type", content_type)],
+                [("Content-Type", content_type), ("Retry-After", "60")],
                 [body.encode()])

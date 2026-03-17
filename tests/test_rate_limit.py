@@ -8,42 +8,31 @@ from app.rate_limit import WSGIRateLimiter, get_client_ip
 
 
 class TestGetClientIP:
-    def test_no_forwarded_for_uses_remote_addr(self):
+    def test_reads_remote_addr(self):
+        """get_client_ip reads REMOTE_ADDR; ProxyFix is responsible for correcting it."""
         environ = {"REMOTE_ADDR": "1.2.3.4"}
         assert get_client_ip(environ) == "1.2.3.4"
 
-    def test_single_forwarded_for(self):
+    def test_ignores_x_forwarded_for(self):
+        """XFF is NOT parsed — ProxyFix handles that before get_client_ip is called."""
         environ = {
             "HTTP_X_FORWARDED_FOR": "5.6.7.8",
             "REMOTE_ADDR": "127.0.0.1",
         }
-        assert get_client_ip(environ) == "5.6.7.8"
+        assert get_client_ip(environ) == "127.0.0.1"
 
-    def test_multiple_forwarded_for_uses_last(self):
-        """Trust the last (Caddy-appended) entry."""
-        environ = {
-            "HTTP_X_FORWARDED_FOR": "10.0.0.1, 10.0.0.2, 9.9.9.9",
-            "REMOTE_ADDR": "127.0.0.1",
-        }
-        assert get_client_ip(environ) == "9.9.9.9"
-
-    def test_forwarded_for_with_spaces(self):
-        environ = {
-            "HTTP_X_FORWARDED_FOR": "1.1.1.1 , 2.2.2.2",
-            "REMOTE_ADDR": "127.0.0.1",
-        }
-        assert get_client_ip(environ) == "2.2.2.2"
-
-    def test_empty_forwarded_for_falls_back_to_remote_addr(self):
-        environ = {
-            "HTTP_X_FORWARDED_FOR": "",
-            "REMOTE_ADDR": "3.3.3.3",
-        }
-        assert get_client_ip(environ) == "3.3.3.3"
-
-    def test_missing_everything_returns_loopback(self):
+    def test_missing_remote_addr_returns_loopback(self):
         environ = {}
         assert get_client_ip(environ) == "127.0.0.1"
+
+    def test_proxyfix_corrected_addr_is_used(self):
+        """Simulate what happens after ProxyFix runs: REMOTE_ADDR is the real client IP."""
+        # ProxyFix would have moved the XFF value into REMOTE_ADDR
+        environ = {
+            "HTTP_X_FORWARDED_FOR": "5.6.7.8",  # stale; ProxyFix already processed it
+            "REMOTE_ADDR": "9.9.9.9",            # ProxyFix-corrected real client IP
+        }
+        assert get_client_ip(environ) == "9.9.9.9"
 
 
 class TestWSGIRateLimiter:
@@ -84,8 +73,9 @@ class TestWSGIRateLimiter:
         limiter = WSGIRateLimiter()
         status, headers, body = limiter.make_429_response(json_response=True)
         assert status == "429 Too Many Requests"
-        content_types = {k.lower(): v for k, v in headers}
-        assert "application/json" in content_types.get("content-type", "")
+        header_dict = {k.lower(): v for k, v in headers}
+        assert "application/json" in header_dict.get("content-type", "")
+        assert header_dict.get("retry-after") == "60"
         import json
         data = json.loads(b"".join(body))
         assert "error" in data
@@ -94,7 +84,8 @@ class TestWSGIRateLimiter:
         limiter = WSGIRateLimiter()
         status, headers, body = limiter.make_429_response(json_response=False)
         assert status == "429 Too Many Requests"
-        content_types = {k.lower(): v for k, v in headers}
-        assert "text/html" in content_types.get("content-type", "")
+        header_dict = {k.lower(): v for k, v in headers}
+        assert "text/html" in header_dict.get("content-type", "")
+        assert header_dict.get("retry-after") == "60"
         text = b"".join(body).decode()
         assert "429" in text
