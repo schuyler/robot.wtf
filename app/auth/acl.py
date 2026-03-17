@@ -82,7 +82,7 @@ class AclEnforcer:
     def check_bearer_token(
         self, token: str
     ) -> dict[str, Any]:
-        """Validate a bearer token against stored bcrypt hashes.
+        """Validate a bearer token against its stored SHA-256 hash.
 
         Args:
             token: The plaintext bearer token.
@@ -93,7 +93,7 @@ class AclEnforcer:
         Raises:
             AuthError: If no wiki matches the token.
         """
-        wiki = self._wikis.scan_by_token(token)
+        wiki = self._wikis.get_by_token(token)
         if not wiki:
             raise AuthError("Invalid bearer token", status=401)
 
