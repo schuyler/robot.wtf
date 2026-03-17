@@ -70,7 +70,7 @@ import jwt as pyjwt
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthError
 from app.db import get_connection, init_schema
-from app.models.user import UserModel, validate_username
+from app.models.user import UserModel, validate_username, default_username_from_handle
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
@@ -137,23 +137,6 @@ def _fetch_display_name(did: str) -> str | None:
         logger.debug("Failed to fetch display name for %s: %s", did, e)
     return None
 
-
-def _default_username_from_handle(handle: str) -> str:
-    """Derive a default username from a Bluesky handle.
-
-    Takes the first segment (before the first dot), lowercases it,
-    strips non-alphanumeric/hyphen chars.
-    """
-    prefix = handle.split(".")[0].lower()
-    # Keep only lowercase alphanumeric and hyphens
-    prefix = re.sub(r"[^a-z0-9-]", "", prefix)
-    # Strip leading/trailing hyphens
-    prefix = prefix.strip("-")
-    # Ensure minimum length
-    if len(prefix) < 3:
-        prefix = prefix + "user"
-    # Truncate to 30 chars
-    return prefix[:30]
 
 
 def create_app(
@@ -531,7 +514,7 @@ def create_app(
         if not pending_did or not pending_handle:
             return redirect("/auth/login")
 
-        default_username = _default_username_from_handle(pending_handle)
+        default_username = default_username_from_handle(pending_handle)
 
         if request.method != "POST":
             return render_template(

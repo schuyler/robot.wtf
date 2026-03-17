@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from app.models.user import UserModel, validate_username
+from app.models.user import UserModel, validate_username, default_username_from_handle
 from app.models.wiki import WikiModel
 
 
@@ -173,6 +173,36 @@ class TestValidateUsername:
         ok, err = validate_username("admin")
         assert ok is False
         assert "reserved" in err.lower()
+
+
+class TestDefaultUsernameFromHandle:
+    def test_normal_handle(self):
+        assert default_username_from_handle("alice.bsky.social") == "alice"
+
+    def test_short_prefix_padded(self):
+        assert default_username_from_handle("ab.bsky.social") == "abwiki"
+
+    def test_empty_handle(self):
+        assert default_username_from_handle("") == ""
+
+    def test_reserved_admin(self):
+        assert default_username_from_handle("admin.bsky.social") == ""
+
+    def test_not_reserved_user(self):
+        # "user" is not in RESERVED_USERNAMES so it passes through
+        assert default_username_from_handle("user.bsky.social") == "user"
+
+    def test_hyphen_handle(self):
+        assert default_username_from_handle("a-b.bsky.social") == "a-b"
+
+    def test_underscore_stripped(self):
+        assert default_username_from_handle("alice_bob.bsky.social") == "alicebob"
+
+    def test_all_hyphens_reserved(self):
+        # "----" stripped of hyphens yields "", padded to "wiki",
+        # but "wiki" is reserved so the result is ""
+        result = default_username_from_handle("----.bsky.social")
+        assert result == ""
 
 
 # --- WikiModel ---

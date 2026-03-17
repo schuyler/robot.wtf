@@ -44,6 +44,32 @@ def validate_username(username: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def default_username_from_handle(handle: str) -> str:
+    """Derive a default username from a Bluesky handle.
+
+    Takes the first segment (before the first dot), lowercases it,
+    strips non-alphanumeric/hyphen chars, and pads short results with "wiki".
+
+    Returns "" for empty/None handles or if the derived slug is reserved.
+    """
+    if not handle:
+        return ""
+    prefix = handle.split(".")[0].lower()
+    # Keep only lowercase alphanumeric and hyphens
+    prefix = re.sub(r"[^a-z0-9-]", "", prefix)
+    # Strip leading/trailing hyphens
+    prefix = prefix.strip("-")
+    # Ensure minimum length
+    if len(prefix) < 3:
+        prefix = prefix + "wiki"
+    # Truncate to 30 chars
+    prefix = prefix[:30]
+    # Return "" if the derived slug is reserved
+    if prefix in RESERVED_USERNAMES:
+        return ""
+    return prefix
+
+
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     """Convert a sqlite3.Row to a plain dict, or return None."""
     if row is None:

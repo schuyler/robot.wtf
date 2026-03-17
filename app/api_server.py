@@ -37,7 +37,7 @@ from app.management.routes import (
 )
 from app.resolver import _init_wiki_db, _initialized_dbs
 from app.management.token import generate_mcp_token
-from app.models.user import UserModel
+from app.models.user import UserModel, default_username_from_handle
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ def _create_flask_app() -> Flask:
         wiki_model = app.config["WIKI_MODEL"]
 
         if request.method == "GET":
-            default_slug = user.record.get("username", "")
+            default_slug = user.record.get("username") or default_username_from_handle(user.handle or "")
             return render_template(
                 "wiki_create.html",
                 user=user,
