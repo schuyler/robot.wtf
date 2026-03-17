@@ -19,9 +19,12 @@ wait_for_service() {
     local deadline=$((SECONDS + 30))
 
     while [ $SECONDS -lt $deadline ]; do
-        if systemctl is-active --quiet "$svc" && \
-           curl -sf --max-time 5 "http://localhost:${port}/" >/dev/null 2>&1; then
-            return 0
+        if systemctl is-active --quiet "$svc"; then
+            local code
+            code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${port}/" 2>/dev/null || echo "000")"
+            if [[ ! "$code" =~ ^[5] ]] && [ "$code" != "000" ]; then
+                return 0
+            fi
         fi
         sleep 2
     done
@@ -40,68 +43,65 @@ declare -A SERVICES=(
     [robot-auth]=8003
 )
 
+api_alive=false
+auth_alive=false
+
 for svc in robot-otterwiki robot-mcp robot-api robot-auth; do
     port="${SERVICES[$svc]}"
 
-    # systemctl check
-    if ! systemctl is-active --quiet "$svc"; then
-        fail "${svc}: systemd unit not active (waited up to 30s)"
-        # No point curling if the unit isn't running
-        continue
-    fi
-
-    # HTTP reachability with retry loop
-    deadline=$((SECONDS + 30))
-    http_ok=false
-    while [ $SECONDS -lt $deadline ]; do
-        if curl -sf --max-time 5 "http://localhost:${port}/" >/dev/null 2>&1; then
-            http_ok=true
-            break
-        fi
-        sleep 2
-    done
-
-    if [ "$http_ok" = true ]; then
+    if wait_for_service "$svc" "$port"; then
         pass "${svc} (port ${port}): active and responding"
+        [ "$svc" = "robot-api" ]  && api_alive=true
+        [ "$svc" = "robot-auth" ] && auth_alive=true
     else
         fail "${svc} (port ${port}): not responding after 30s"
     fi
 done
 
-# robot-api: expect 200 with "robot.wtf" in body
-api_body="$(curl -s --max-time 5 http://localhost:8002/ 2>/dev/null || true)"
-if echo "$api_body" | grep -q "robot.wtf"; then
-    pass "robot-api body contains 'robot.wtf'"
-else
-    fail "robot-api body does not contain 'robot.wtf' (got: ${api_body:0:80})"
+# robot-api: expect response with "robot.wtf" in body (only if liveness passed)
+if [ "$api_alive" = true ]; then
+    api_body="$(curl -s --max-time 5 http://localhost:8002/ 2>/dev/null || true)"
+    if echo "$api_body" | grep -q "robot.wtf"; then
+        pass "robot-api body contains 'robot.wtf'"
+    else
+        fail "robot-api body does not contain 'robot.wtf'"
+    fi
 fi
 
-# robot-auth: expect 200 with login form content
-auth_body="$(curl -s --max-time 5 http://localhost:8003/auth/login 2>/dev/null || true)"
-if echo "$auth_body" | grep -qi "login\|<form"; then
-    pass "robot-auth /auth/login contains login form"
-else
-    fail "robot-auth /auth/login missing expected content (got: ${auth_body:0:80})"
+# robot-auth: expect login form content (only if liveness passed)
+if [ "$auth_alive" = true ]; then
+    auth_body="$(curl -s --max-time 5 http://localhost:8003/auth/login 2>/dev/null || true)"
+    if echo "$auth_body" | grep -qi "login\|<form"; then
+        pass "robot-auth /auth/login contains login form"
+    else
+        fail "robot-auth /auth/login missing expected content"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
 # B. Auth well-known endpoints (port 8003)
 # ---------------------------------------------------------------------------
 
-# OAuth authorization server metadata
-as_meta="$(curl -s --max-time 5 http://localhost:8003/.well-known/oauth-authorization-server 2>/dev/null || true)"
-as_status="$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8003/.well-known/oauth-authorization-server 2>/dev/null || true)"
-if [ "$as_status" = "200" ] && echo "$as_meta" | grep -q '"issuer"'; then
-    pass "robot-auth /.well-known/oauth-authorization-server: 200 with issuer"
+# OAuth authorization server metadata — fetch body and status in one call
+as_tmp="$(mktemp)"
+as_status="$(curl -s -o "$as_tmp" -w "%{http_code}" --max-time 5 \
+    http://localhost:8003/.well-known/oauth-authorization-server 2>/dev/null || echo "000")"
+as_meta="$(cat "$as_tmp")"
+rm -f "$as_tmp"
+if [[ ! "$as_status" =~ ^[5] ]] && [ "$as_status" != "000" ] && echo "$as_meta" | grep -q '"issuer"'; then
+    pass "robot-auth /.well-known/oauth-authorization-server: ${as_status} with issuer"
 else
     fail "robot-auth /.well-known/oauth-authorization-server: status=${as_status}, missing issuer"
 fi
 
-# JWKS
-jwks_body="$(curl -s --max-time 5 http://localhost:8003/.well-known/jwks.json 2>/dev/null || true)"
-jwks_status="$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8003/.well-known/jwks.json 2>/dev/null || true)"
-if [ "$jwks_status" = "200" ] && echo "$jwks_body" | grep -q '"keys"'; then
-    pass "robot-auth /.well-known/jwks.json: 200 with keys"
+# JWKS — fetch body and status in one call
+jwks_tmp="$(mktemp)"
+jwks_status="$(curl -s -o "$jwks_tmp" -w "%{http_code}" --max-time 5 \
+    http://localhost:8003/.well-known/jwks.json 2>/dev/null || echo "000")"
+jwks_body="$(cat "$jwks_tmp")"
+rm -f "$jwks_tmp"
+if [[ ! "$jwks_status" =~ ^[5] ]] && [ "$jwks_status" != "000" ] && echo "$jwks_body" | grep -q '"keys"'; then
+    pass "robot-auth /.well-known/jwks.json: ${jwks_status} with keys"
 else
     fail "robot-auth /.well-known/jwks.json: status=${jwks_status}, missing keys"
 fi
@@ -110,10 +110,13 @@ fi
 # C. MCP OAuth metadata (port 8001)
 # ---------------------------------------------------------------------------
 
-mcp_meta="$(curl -s --max-time 5 http://localhost:8001/.well-known/oauth-protected-resource 2>/dev/null || true)"
-mcp_status="$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8001/.well-known/oauth-protected-resource 2>/dev/null || true)"
-if [ "$mcp_status" = "200" ] && echo "$mcp_meta" | grep -q '"authorization_servers"'; then
-    pass "robot-mcp /.well-known/oauth-protected-resource: 200 with authorization_servers"
+mcp_tmp="$(mktemp)"
+mcp_status="$(curl -s -o "$mcp_tmp" -w "%{http_code}" --max-time 5 \
+    http://localhost:8001/.well-known/oauth-protected-resource 2>/dev/null || echo "000")"
+mcp_meta="$(cat "$mcp_tmp")"
+rm -f "$mcp_tmp"
+if [[ ! "$mcp_status" =~ ^[5] ]] && [ "$mcp_status" != "000" ] && echo "$mcp_meta" | grep -q '"authorization_servers"'; then
+    pass "robot-mcp /.well-known/oauth-protected-resource: ${mcp_status} with authorization_servers"
 else
     fail "robot-mcp /.well-known/oauth-protected-resource: status=${mcp_status}, missing authorization_servers"
 fi
@@ -126,16 +129,19 @@ ROBOT_ENV="/srv/data/robot.env"
 if [ ! -f "$ROBOT_ENV" ]; then
     fail "Cannot find $ROBOT_ENV — skipping wiki checks"
 else
-    ROBOT_DB_PATH="$(grep -m1 '^ROBOT_DB_PATH=' "$ROBOT_ENV" | cut -d= -f2-)"
+    ROBOT_DB_PATH="$(grep -m1 '^ROBOT_DB_PATH=' "$ROBOT_ENV" | cut -d= -f2- | sed "s/^['\"]//;s/['\"]$//")"
     if [ -z "$ROBOT_DB_PATH" ]; then
         fail "ROBOT_DB_PATH not set in $ROBOT_ENV — skipping wiki checks"
     elif [ ! -f "$ROBOT_DB_PATH" ]; then
         fail "DB not found at ${ROBOT_DB_PATH} — skipping wiki checks"
     else
-        # Read slugs from DB
-        slugs="$(sqlite3 "$ROBOT_DB_PATH" 'SELECT slug FROM wikis;' 2>/dev/null || true)"
+        # Read slugs from DB; distinguish error from empty table
+        slugs="$(sqlite3 "$ROBOT_DB_PATH" 'SELECT slug FROM wikis;' 2>&1)" || {
+            fail "sqlite3 error: ${slugs}"
+            slugs=""
+        }
         if [ -z "$slugs" ]; then
-            fail "No wikis found in DB or sqlite3 error"
+            fail "No wikis found in DB"
         else
             while IFS= read -r slug; do
                 [ -z "$slug" ] && continue
@@ -173,4 +179,4 @@ else
     echo "Smoke test FAILED (${FAILURES} check(s) failed)"
 fi
 
-exit "$FAILURES"
+exit $(( FAILURES > 125 ? 125 : FAILURES ))
