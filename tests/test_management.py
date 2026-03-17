@@ -13,6 +13,7 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 from typing import Any
 from unittest.mock import MagicMock
@@ -26,6 +27,7 @@ from app.management.routes import (
     MAX_WIKIS_PER_USER,
     validate_slug,
 )
+import app.management.routes as management_routes
 from app.models.acl import AclModel
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
@@ -146,6 +148,20 @@ def collab_user(user_model):
 def wiki_base(tmp_path):
     """Temp directory for wiki repos."""
     return str(tmp_path / "wikis")
+
+
+@pytest.fixture
+def template_dir(tmp_path):
+    """Create a temp wiki template directory and patch WIKI_TEMPLATE_DIR."""
+    tdir = tmp_path / "templates" / "default-wiki"
+    tdir.mkdir(parents=True)
+    (tdir / "Home.md").write_text("# Welcome\n\nYour wiki.\n")
+    (tdir / "Getting_Started.md").write_text("# Getting Started\n\nSetup guide.\n")
+    (tdir / "Agent_Guide.md").write_text("# Agent Guide\n\nFor agents.\n")
+    old = management_routes.WIKI_TEMPLATE_DIR
+    management_routes.WIKI_TEMPLATE_DIR = str(tdir)
+    yield str(tdir)
+    management_routes.WIKI_TEMPLATE_DIR = old
 
 
 @pytest.fixture
@@ -696,3 +712,62 @@ class TestGitHttp:
         capture = _ResponseCapture()
         backend(environ, capture)
         assert capture.status.startswith("200")
+
+
+# --- Template Seeding Tests ---
+
+
+class TestTemplateSeeding:
+    def test_seeds_from_template_dir(self, wiki_base, template_dir):
+        """_init_wiki_repo copies all .md files from the template directory."""
+        from app.management.routes import _init_wiki_repo
+
+        repo_path = os.path.join(wiki_base, "tpl-wiki", "repo")
+        _init_wiki_repo(repo_path, "Template Wiki", "Testing templates")
+
+        assert os.path.isfile(os.path.join(repo_path, "Home.md"))
+        assert os.path.isfile(os.path.join(repo_path, "Getting_Started.md"))
+        assert os.path.isfile(os.path.join(repo_path, "Agent_Guide.md"))
+
+        # Home.md should be from template, not the fallback
+        with open(os.path.join(repo_path, "Home.md")) as f:
+            assert "Your wiki" in f.read()
+
+        # All files should be committed
+        result = subprocess.run(
+            ["git", "-C", repo_path, "status", "--porcelain"],
+            capture_output=True, text=True,
+        )
+        assert result.stdout.strip() == "", "Uncommitted files in repo"
+
+    def test_fallback_without_template_dir(self, wiki_base):
+        """Without a template dir, falls back to a minimal Home.md."""
+        old = management_routes.WIKI_TEMPLATE_DIR
+        management_routes.WIKI_TEMPLATE_DIR = "/nonexistent/path"
+        try:
+            from app.management.routes import _init_wiki_repo
+            repo_path = os.path.join(wiki_base, "fallback-wiki", "repo")
+            _init_wiki_repo(repo_path, "Fallback Wiki", "Testing fallback")
+
+            home_path = os.path.join(repo_path, "Home.md")
+            assert os.path.isfile(home_path)
+            with open(home_path) as f:
+                content = f.read()
+            assert "Fallback Wiki" in content
+        finally:
+            management_routes.WIKI_TEMPLATE_DIR = old
+
+    def test_creates_non_bare_repo(self, wiki_base, template_dir):
+        """Wiki repos must be non-bare (otterwiki needs a working tree)."""
+        from app.management.routes import _init_wiki_repo
+
+        repo_path = os.path.join(wiki_base, "bare-check", "repo")
+        _init_wiki_repo(repo_path, "Bare Check", "Testing")
+
+        assert os.path.isdir(os.path.join(repo_path, ".git")), \
+            "Repo should have .git directory (non-bare)"
+        result = subprocess.run(
+            ["git", "-C", repo_path, "config", "--get", "core.bare"],
+            capture_output=True, text=True,
+        )
+        assert result.stdout.strip() == "false", "Repo should not be bare"

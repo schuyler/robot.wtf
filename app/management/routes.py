@@ -80,8 +80,16 @@ _WIKI_ACL_DETAIL = re.compile(
 WIKI_BASE = "/srv/data/wikis"
 
 
+WIKI_TEMPLATE_DIR = os.environ.get(
+    "WIKI_TEMPLATE_DIR", "/srv/app/templates/default-wiki"
+)
+
+
 def _init_wiki_repo(repo_path: str, display_name: str, purpose: str) -> None:
-    """Initialize a git repo and create a bootstrap Home page.
+    """Initialize a git repo and seed it from the wiki template.
+
+    Copies all .md files from WIKI_TEMPLATE_DIR into the new repo.
+    Falls back to a minimal Home.md if the template dir is missing.
 
     Args:
         repo_path: Path where the git repo should be created.
@@ -101,13 +109,30 @@ def _init_wiki_repo(repo_path: str, display_name: str, purpose: str) -> None:
         check=True, capture_output=True,
     )
 
-    # Create Home.md
+    # Seed from template directory if available
+    seeded_files = []
+    if os.path.isdir(WIKI_TEMPLATE_DIR):
+        for name in os.listdir(WIKI_TEMPLATE_DIR):
+            if not name.endswith(".md"):
+                continue
+            src = os.path.join(WIKI_TEMPLATE_DIR, name)
+            dst = os.path.join(repo_path, name)
+            shutil.copy2(src, dst)
+            seeded_files.append(name)
+
+    # Always ensure Home.md exists
     home_path = os.path.join(repo_path, "Home.md")
-    with open(home_path, "w") as f:
-        f.write(f"# {display_name}\n\n{purpose}\n")
+    if not os.path.exists(home_path):
+        with open(home_path, "w") as f:
+            f.write(f"# {display_name}\n\n{purpose}\n")
+        if "Home.md" not in seeded_files:
+            seeded_files.append("Home.md")
+
+    if not seeded_files:
+        seeded_files = ["Home.md"]
 
     subprocess.run(
-        [git, "-C", repo_path, "add", "Home.md"],
+        [git, "-C", repo_path, "add"] + seeded_files,
         check=True, capture_output=True,
     )
     subprocess.run(

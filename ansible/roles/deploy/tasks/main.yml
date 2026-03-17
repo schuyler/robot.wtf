@@ -81,6 +81,13 @@
     group: robot
     recurse: true
 
+- name: Sync wiki template to VPS
+  ansible.builtin.synchronize:
+    src: "{{ playbook_dir }}/../templates/"
+    dest: /srv/app/templates/
+    delete: true
+  notify: restart robot services
+
 - name: Create /srv/data directory
   ansible.builtin.file:
     path: /srv/data
