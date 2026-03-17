@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
 from app.management.token import generate_mcp_token
+from app.resolver import _init_wiki_db, _initialized_dbs
 from app.models.acl import AclModel
 from app.models.user import RESERVED_USERNAMES, UserModel, validate_username
 from app.models.wiki import WikiModel
@@ -397,6 +398,14 @@ class ManagementMiddleware:
                 pass
             return 500, {"error": "Failed to initialize wiki repository"}
 
+        # Initialize per-wiki database
+        wiki_dir = os.path.dirname(repo_path)
+        db_path = os.path.join(wiki_dir, "wiki.db")
+        try:
+            _init_wiki_db(db_path, site_name=display_name)
+        except Exception:
+            logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
+
         # Increment wiki count
         self._users.update(user.user_did, wiki_count=wiki_count + 1)
 
@@ -445,6 +454,9 @@ class ManagementMiddleware:
         if repo_path:
             wiki_dir = os.path.dirname(repo_path)
             _delete_wiki_repo(wiki_dir)
+            # Clear DB initialization cache
+            db_path = os.path.join(wiki_dir, "wiki.db")
+            _initialized_dbs.discard(db_path)
 
         # Delete all ACLs for this wiki
         acls = self._acls.list_by_wiki(slug)
