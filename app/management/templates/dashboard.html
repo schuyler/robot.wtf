@@ -25,7 +25,6 @@
       <!-- MCP section -->
       <hr>
       <h6 class="mb-2">MCP</h6>
-      {% with mcp_token = session.get("mcp_token") %}
       {% if mcp_token %}
       <div class="alert alert-warning py-2">
         <strong>Your MCP bearer token</strong> &mdash; copy it now, it will not be shown again.
@@ -36,7 +35,6 @@
         </button>
       </div>
       {% endif %}
-      {% endwith %}
       <div class="mb-2">
         <span class="text-muted small">MCP endpoint:</span>
         <code>https://{{ wiki.slug }}.{{ platform_domain }}/mcp</code>

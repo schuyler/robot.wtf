@@ -162,11 +162,15 @@ def _create_flask_app() -> Flask:
         wiki_model = app.config["WIKI_MODEL"]
         wikis = wiki_model.list_by_owner(user.user_did)
 
+        # Pop token from session so it's shown only once
+        mcp_token = session.pop("mcp_token", None)
+
         return render_template(
             "dashboard.html",
             user=user,
             wikis=wikis,
             platform_domain=PLATFORM_DOMAIN,
+            mcp_token=mcp_token,
         )
 
     @app.route("/app/create", methods=["GET", "POST"])

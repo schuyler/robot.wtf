@@ -1279,3 +1279,129 @@ class TestInitWikiDbSeeding:
         conn.close()
 
         assert count == 1, f"Owner should appear exactly once; found {count}"
+
+
+class TestOwnerOnApprovedWiki:
+    """Owner always keeps full permissions even on APPROVED wikis."""
+
+    def test_owner_on_approved_wiki_keeps_all_permissions(self):
+        """Owner with READ_ACCESS=APPROVED keeps READ, WRITE, UPLOAD, ADMIN."""
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+
+        owner_did = "did:plc:owner-approved"
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did=owner_did,
+            handle="owner.bsky.social",
+            display_name="Owner",
+            record={},
+        )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "approved-owner-wiki",
+            "owner_did": owner_did,
+            "display_name": "Approved Owner Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        resolver = TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+        environ = _make_environ("approved-owner-wiki.robot.wtf")
+        environ["HTTP_COOKIE"] = "platform_token=sometoken"
+        start_response, calls = _capture_response()
+
+        approved_config = {
+            "READ_ACCESS": "APPROVED",
+            "WRITE_ACCESS": "APPROVED",
+            "ATTACHMENT_ACCESS": "APPROVED",
+        }
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=approved_config):
+            resolver(environ, start_response)
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "200 OK", f"Owner should be allowed; got {status}"
+        perms = injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+        assert "ADMIN" in perms, f"Owner should have ADMIN; got {perms!r}"
+        assert "READ" in perms, f"Owner should have READ; got {perms!r}"
+        assert "WRITE" in perms, f"Owner should have WRITE; got {perms!r}"
+        assert "UPLOAD" in perms, f"Owner should have UPLOAD; got {perms!r}"
+
+
+class TestBearerTokenWikiCrossCheck:
+    """Bearer token must only work on the wiki it was issued for."""
+
+    def test_bearer_token_wrong_wiki_denied(self):
+        """Token for wiki A used on wiki B should be rejected with 403."""
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware
+
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        wiki_model = MagicMock()
+        # Host resolves to wiki B
+        wiki_model.get.return_value = {
+            "slug": "wiki-b",
+            "owner_did": "did:plc:owner-b",
+            "display_name": "Wiki B",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        # But the token belongs to wiki A
+        wiki_model.get_by_token.return_value = {
+            "slug": "wiki-a",
+            "owner_did": "did:plc:owner-a",
+            "display_name": "Wiki A",
+        }
+        user_model = MagicMock()
+
+        resolver = TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+        environ = _make_environ("wiki-b.robot.wtf")
+        environ["HTTP_AUTHORIZATION"] = "Bearer token-for-wiki-a"
+        start_response, calls = _capture_response()
+
+        public_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=public_config):
+            resolver(environ, start_response)
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status in ("403 Forbidden", "401 Unauthorized"), (
+            f"Token from wiki-a on wiki-b should be denied; got {status}"
+        )

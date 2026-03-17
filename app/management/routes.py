@@ -370,9 +370,11 @@ class ManagementMiddleware:
         # Initialize per-wiki database, seeding the owner
         wiki_dir = os.path.dirname(repo_path)
         db_path = os.path.join(wiki_dir, "wiki.db")
-        owner_handle = user.handle.split(".")[0] if user.handle else None
+        # Use the full handle for email lookup (@{full_handle}); the name can use the short form
+        full_handle = user.handle if user.handle else None
+        owner_name = user.handle.split(".")[0] if user.handle else None
         try:
-            _init_wiki_db(db_path, site_name=display_name, owner_handle=owner_handle)
+            _init_wiki_db(db_path, site_name=display_name, owner_handle=full_handle, owner_name=owner_name)
         except Exception:
             logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 

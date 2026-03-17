@@ -57,6 +57,7 @@ def _init_wiki_db(
     site_name: str = None,
     is_public: bool = True,
     owner_handle: str = None,
+    owner_name: str = None,
 ) -> None:
     """Create otterwiki tables in a per-wiki SQLite database.
 
@@ -70,7 +71,10 @@ def _init_wiki_db(
             READ_ACCESS is not already set, seeds READ_ACCESS=REGISTERED
             to preserve the wiki's private status after is_public removal.
         owner_handle: If provided, seeds the owner into the per-wiki user
-            table as is_admin=True, is_approved=True (Unit 3).
+            table as is_admin=True, is_approved=True (Unit 3). The full
+            handle is used for the email field (@{owner_handle}).
+        owner_name: Display name for the seeded owner row. If None, falls
+            back to the short form of owner_handle (before the first dot).
     """
     if db_path in _initialized_dbs:
         return
@@ -132,13 +136,16 @@ def _init_wiki_db(
             )
         # Unit 3: seed wiki owner into the per-wiki user table so the owner
         # has admin access through the per-wiki user table path.
+        # email uses the full handle (@{owner_handle}); name uses owner_name
+        # (short form) if provided, else falls back to the first segment.
         if owner_handle:
+            seed_name = owner_name if owner_name else owner_handle.split(".")[0]
             conn.execute(
                 """INSERT OR IGNORE INTO "user"
                    (name, email, is_admin, is_approved, allow_read, allow_write,
                     allow_upload, first_seen, last_seen)
                    VALUES (?, ?, 1, 1, 1, 1, 1, datetime('now'), datetime('now'))""",
-                (owner_handle, f"@{owner_handle}"),
+                (seed_name, f"@{owner_handle}"),
             )
         conn.commit()
     finally:
@@ -273,6 +280,9 @@ def _apply_wiki_access_restrictions(
     ADMIN is never stripped.
     """
     from app.auth.permissions import READ, WRITE, UPLOAD
+
+    if "ADMIN" in permissions:
+        return list(permissions)  # Admins bypass access restrictions
 
     if config is None:
         config = _get_wiki_access_config()
@@ -692,7 +702,7 @@ class TenantResolver:
                     "is_bearer_token": True,
                 }
 
-            return self._resolve_bearer_token(token)
+            return self._resolve_bearer_token(token, wiki_slug=wiki_slug)
 
         # Try cookie auth
         cookie_header = environ.get("HTTP_COOKIE")
@@ -748,12 +758,16 @@ class TenantResolver:
             "per_wiki_user": per_wiki_user,
         }
 
-    def _resolve_bearer_token(self, token: str) -> dict[str, Any]:
+    def _resolve_bearer_token(self, token: str, wiki_slug: str | None = None) -> dict[str, Any]:
         """Authenticate via MCP bearer token. Uses WikiModel.get_by_token()."""
         from app.auth.permissions import permissions_for_role
         wiki = self._wikis.get_by_token(token)
         if not wiki:
             raise AuthError("Invalid bearer token", status=401)
+
+        # Cross-check: token must belong to the wiki identified by the Host header
+        if wiki_slug is not None and wiki.get("slug") != wiki_slug:
+            raise AuthError("Bearer token does not match this wiki", status=403)
 
         proxy_headers = build_proxy_headers(
             email="mcp@robot.wtf",

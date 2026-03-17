@@ -14,7 +14,6 @@ from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthMiddleware
 from app.db import get_connection
 from app.management.routes import ManagementMiddleware
-from app.models.acl import AclModel
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
 from app.resolver import TenantResolver
@@ -48,7 +47,6 @@ def _build_app():
     # Models
     user_model = UserModel(conn)
     wiki_model = WikiModel(conn)
-    acl_model = AclModel(conn)
 
     # Auth
     private_key, public_key = _load_keys()
@@ -67,7 +65,6 @@ def _build_app():
         auth_middleware=auth_middleware,
         user_model=user_model,
         wiki_model=wiki_model,
-        acl_model=acl_model,
     )
 
     # Wrap with TenantResolver if multi-tenant

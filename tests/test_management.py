@@ -404,9 +404,6 @@ class TestTierLimits:
         assert status == 403
         assert "limit" in body["error"].lower()
 
-    # No collaborator limit for robot.wtf
-        assert "limit" in body["error"].lower()
-
     def test_page_limit_check(self, wiki_model, owner_user):
         """check_page_limit should reject when at limit."""
         wiki = wiki_model.create(
