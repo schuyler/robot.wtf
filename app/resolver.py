@@ -52,6 +52,9 @@ QUOTA_BYTES = 50 * 1024 * 1024  # 50MB
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
 
 
+_SCHEMA_VERSION = "2"
+
+
 def _init_wiki_db(
     db_path: str,
     site_name: str = None,
@@ -64,15 +67,18 @@ def _init_wiki_db(
     Uses raw SQL to avoid importing otterwiki models.
     Tables: preferences, drafts, user, cache.
 
+    All operations are idempotent (CREATE TABLE IF NOT EXISTS, INSERT OR IGNORE),
+    so this function is safe to re-run on an existing database without overwriting
+    user-modified preferences.
+
     Args:
         db_path: Path to the per-wiki SQLite file.
         site_name: Optional SITE_NAME preference to seed.
-        is_public: Whether the wiki is publicly readable. If False and
-            READ_ACCESS is not already set, seeds READ_ACCESS=REGISTERED
-            to preserve the wiki's private status after is_public removal.
+        is_public: Unused. Kept for call-site compatibility. Access defaults
+            are now always seeded as REGISTERED via the comprehensive seed list.
         owner_handle: If provided, seeds the owner into the per-wiki user
-            table as is_admin=True, is_approved=True (Unit 3). The full
-            handle is used for the email field (@{owner_handle}).
+            table as is_admin=True, is_approved=True. The full handle is used
+            for the email field (@{owner_handle}).
         owner_name: Display name for the seeded owner row. If None, falls
             back to the short form of owner_handle (before the first dot).
     """
@@ -121,21 +127,41 @@ def _init_wiki_db(
             );
             CREATE INDEX IF NOT EXISTS ix_cache_key ON cache (key);
         """)
+
+        # Seed all platform-mode preferences with INSERT OR IGNORE so that
+        # user-modified values are never overwritten on re-init.
+        platform_preferences = [
+            # Access control: default to REGISTERED so wikis are private by
+            # default. Otterwiki's built-in default is ANONYMOUS which would
+            # make every new wiki world-writable.
+            ("READ_ACCESS", "REGISTERED"),
+            ("WRITE_ACCESS", "REGISTERED"),
+            ("ATTACHMENT_ACCESS", "REGISTERED"),
+            # Auth: platform uses proxy header auth; registration is handled
+            # by the platform, not by otterwiki's own registration flow.
+            ("AUTH_METHOD", "PROXY_HEADER"),
+            ("DISABLE_REGISTRATION", "True"),
+            # Safety net: otterwiki defaults AUTO_APPROVAL=True. If
+            # DISABLE_REGISTRATION ever fails to apply, this prevents open
+            # registration from silently auto-approving new accounts.
+            ("AUTO_APPROVAL", "False"),
+            # Schema version marker for future migration detection.
+            ("_schema_version", _SCHEMA_VERSION),
+        ]
+        for name, value in platform_preferences:
+            conn.execute(
+                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
+                (name, value),
+            )
+
         if site_name:
             conn.execute(
                 "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
                 ("SITE_NAME", site_name),
             )
-        # Migration: seed READ_ACCESS=REGISTERED for private wikis that have
-        # no READ_ACCESS preference yet, preserving their access policy after
-        # the is_public flag was removed as the gating mechanism.
-        if not is_public:
-            conn.execute(
-                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
-                ("READ_ACCESS", "REGISTERED"),
-            )
-        # Unit 3: seed wiki owner into the per-wiki user table so the owner
-        # has admin access through the per-wiki user table path.
+
+        # Seed wiki owner into the per-wiki user table so the owner has admin
+        # access through the per-wiki user table path.
         # email uses the full handle (@{owner_handle}); name uses owner_name
         # (short form) if provided, else falls back to the first segment.
         if owner_handle:
@@ -160,8 +186,8 @@ def _swap_database(wiki_dir: str, is_public: bool = True, display_name: str = No
 
     Args:
         wiki_dir: Directory containing wiki.db.
-        is_public: Passed through to _init_wiki_db to seed READ_ACCESS
-            for wikis that were previously marked private via is_public=0.
+        is_public: Unused. Kept for call-site compatibility. Access defaults
+            are now always seeded via the comprehensive seed list in _init_wiki_db.
         display_name: Wiki display name, seeded as SITE_NAME preference on
             first init so the wiki shows its own name from the start.
     """

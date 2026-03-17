@@ -712,8 +712,14 @@ class TestPrivateWikiMigration:
             "Existing READ_ACCESS should not be overwritten by migration"
         )
 
-    def test_init_wiki_db_public_wiki_does_not_seed_read_access(self, tmp_path):
-        """_init_wiki_db with is_public=True (default) does not seed READ_ACCESS."""
+    def test_init_wiki_db_public_wiki_seeds_read_access_registered(self, tmp_path):
+        """_init_wiki_db always seeds READ_ACCESS=REGISTERED regardless of is_public.
+
+        Phase 2 Unit 5: comprehensive seeding means all platform wikis get
+        REGISTERED as the secure default. The is_public flag is no longer used
+        to conditionally seed READ_ACCESS; access control is handled at the
+        resolver level, not at DB init time.
+        """
         import sqlite3
         from app.resolver import _init_wiki_db
 
@@ -726,10 +732,9 @@ class TestPrivateWikiMigration:
         ).fetchone()
         conn.close()
 
-        assert row is None, (
-            "Public wikis must not have READ_ACCESS seeded; got READ_ACCESS=%r" % (
-                row[0] if row else None,
-            )
+        assert row is not None, "READ_ACCESS should always be seeded"
+        assert row[0] == "REGISTERED", (
+            "Expected READ_ACCESS=REGISTERED (secure default), got %r" % row[0]
         )
 
     def test_anonymous_user_denied_when_is_public_false_no_read_access_set(self):
