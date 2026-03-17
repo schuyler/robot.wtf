@@ -18,7 +18,7 @@
 
     <main>
       <section class="hero">
-        <h1>Memory for agents in a wiki for&nbsp;humans.</h1>
+        <h1>Memory for your agents, in a wiki for you.</h1>
         <p class="subtitle"><strong>robot.wtf</strong> is a lightweight, git-backed wiki with native MCP support. Your AI agents and your browser read and write the same pages, the same history, the same links.</p>
         <a href="/auth/login" class="cta">Get started &mdash; it's free</a>
       </section>
@@ -26,8 +26,9 @@
       <section id="what">
         <h2>What is this?</h2>
         <p><strong>robot.wtf</strong> gives your AI agents a persistent, shared memory in a format that's useful to you too &mdash; a wiki. Every wiki is a git repo full of Markdown files, with a web UI for browsing and editing, and an MCP endpoint that any compatible agent can connect to.</p>
-        <p>I built this because I needed a shared scratchpad for myself and my agents, and nothing like it existed. I wanted Claude.ai and Claude Code to have access to the same set of working notes &mdash; and I wanted to be able to read and edit those notes in a browser like a normal person. So I built it.</p>
-        <p>It runs on <a href="https://github.com/redimp/otterwiki">An Otter Wiki</a>, an open-source wiki engine. The whole thing is a volunteer project for the <a href="https://bsky.app">Bluesky</a> community &mdash; there's no company, no funding, no business model.</p>
+        <p>Agent memory is still not a really well solved problem. I wanted a memory base that multiple agents *and* multiple humans could use for collaboration. <strong>robot.wtf</strong> is that memory base.</p>
+        <p>The <strong>robot.wtf</strong> MCP service offers agents the full range of create, edit, update, and delete options, including partial reads and incremental writes. The MCP tools include both keyword <em>and</em> semantic search across your entire wiki.</p>
+        <p><strong>robot.wtf</strong> runs on <a href="https://github.com/redimp/otterwiki">An Otter Wiki</a>, an open-source wiki engine. The <strong>robot.wtf</strong> service is a volunteer project for the <a href="https://bsky.app">Bluesky</a> community.</p>
       </section>
 
       <section id="how">
@@ -44,18 +45,13 @@ claude mcp add my-wiki https://yourname.robot.wtf/mcp \
       <section id="faq">
         <h2>FAQ</h2>
 
-        <details>
-          <summary>What's MCP?</summary>
-          <p>Model Context Protocol. It's an open standard that lets AI agents use external tools. <strong>robot.wtf</strong> exposes your wiki as an MCP server, so any agent that speaks MCP can read and write your notes. <a href="https://modelcontextprotocol.io">Learn more.</a></p>
-        </details>
-
-        <details>
+       <details>
           <summary>Is it really free?</summary>
           <p>Yes. <strong>robot.wtf</strong> is a volunteer project for the ATProto community. There are no paid tiers, no ads, no data harvesting. If running costs become a problem, I'll figure it out then.</p>
         </details>
 
         <details>
-          <summary>What agents work with it?</summary>
+          <summary>Which agents work with it?</summary>
           <p>Anything that supports MCP's Streamable HTTP transport. Right now that's Claude.ai, Claude Code, Cursor, Windsurf, and the list keeps growing. The protocol is open, so if your tool speaks MCP, it can use your wiki.</p>
         </details>
 
@@ -66,10 +62,15 @@ claude mcp add my-wiki https://yourname.robot.wtf/mcp \
 
         <details>
           <summary>What about privacy?</summary>
-          <p>Your wiki is private by default. Only you and people you explicitly invite can access it. The MCP endpoint uses OAuth, so agents authenticate before they can do anything. Your data is not fed to any AI model.</p>
+          <p>Your wiki is private by default. Only you and people you explicitly invite can access it. The MCP endpoint uses OAuth or bearer tokens, so agents authenticate before they can do anything. Your private data is your own and will never be read or used by us for any purpose. All data is encrypted at rest on the server.</p>
         </details>
 
         <details>
+          <summary>What's MCP? (for the uninitiated)</summary>
+          <p>If you've gotten this far, you probably already know this, but MCP stands for Model Context Protocol. It's an open standard that lets AI agents use external tools. <strong>robot.wtf</strong> exposes your wiki as an MCP server, so any agent that speaks MCP can read and write your notes. <a href="https://modelcontextprotocol.io">Learn more.</a></p>
+        </details>
+
+         <details>
           <summary>Why Bluesky?</summary>
           <p>ATProto has decentralized identity built in. Your <code>@handle</code> is already a verified identity &mdash; no new account to create. It also means this project is built for the community that's actually building on the protocol.</p>
         </details>
