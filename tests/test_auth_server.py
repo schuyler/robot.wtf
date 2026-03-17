@@ -480,6 +480,107 @@ class TestASMetadata:
         assert "jwks_uri" in data
 
 
+# --- Return-to URL Validation ---
+
+
+class TestReturnToValidation:
+    """_is_safe_return_url accepts relative + wiki subdomain URLs, rejects external."""
+
+    def test_return_to_accepts_relative(self):
+        from app.auth_server import _is_safe_return_url
+        assert _is_safe_return_url("/app/") is True
+        assert _is_safe_return_url("/auth/oauth/consent?client_id=x") is True
+
+    def test_return_to_accepts_wiki_subdomain(self):
+        from app.auth_server import _is_safe_return_url
+        assert _is_safe_return_url("https://foo.robot.wtf/Page") is True
+        assert _is_safe_return_url("https://untangling-collective.robot.wtf/") is True
+
+    def test_return_to_rejects_external_domain(self):
+        from app.auth_server import _is_safe_return_url
+        assert _is_safe_return_url("https://evil.com/") is False
+        assert _is_safe_return_url("http://robot.wtf.evil.com/") is False
+
+    def test_return_to_rejects_bare_platform_domain(self):
+        """The bare platform domain (robot.wtf) is not a wiki subdomain."""
+        from app.auth_server import _is_safe_return_url
+        # robot.wtf itself is not *.robot.wtf
+        assert _is_safe_return_url("https://robot.wtf/app/") is False
+
+    def test_return_to_rejects_empty_string(self):
+        from app.auth_server import _is_safe_return_url
+        assert _is_safe_return_url("") is False
+
+    def test_post_login_redirects_to_wiki(self, app, client, db_path):
+        """After login, wiki subdomain return_to in session causes redirect there."""
+        from unittest.mock import patch
+        import sqlite3
+        from datetime import datetime, timezone
+        from authlib.jose import JsonWebKey
+
+        with patch("app.auth_server.initial_token_request") as mock_token, \
+             patch("app.auth_server._fetch_display_name") as mock_display:
+            mock_display.return_value = "Alice"
+            mock_token.return_value = (
+                {
+                    "sub": "did:plc:retto1",
+                    "scope": "atproto",
+                    "access_token": "at_retto",
+                    "refresh_token": "rt_retto",
+                },
+                "nonce_retto",
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("did:plc:retto1", "alice.bsky.social", "Alice", "aliceretto", now),
+            )
+            dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+            conn.execute(
+                """INSERT INTO oauth_auth_requests
+                   (state, authserver_iss, did, handle, pds_url, pkce_verifier,
+                    scope, dpop_authserver_nonce, dpop_private_jwk, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    "state-retto",
+                    "https://bsky.social",
+                    "did:plc:retto1",
+                    "alice.bsky.social",
+                    "https://pds.bsky.social",
+                    "verifier_retto",
+                    "atproto",
+                    "nonce0",
+                    dpop_jwk.as_json(is_private=True),
+                    now,
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            with client.session_transaction() as sess:
+                sess["return_to"] = "https://gruen.robot.wtf/SomePage"
+
+            resp = client.get(
+                "/auth/callback?state=state-retto&iss=https://bsky.social&code=code_retto"
+            )
+            assert resp.status_code == 302
+            assert resp.headers["Location"] == "https://gruen.robot.wtf/SomePage"
+
+    def test_login_page_sets_return_to_unconditionally(self, client):
+        """GET /auth/login?return_to=... stores it in session, overwriting stale value."""
+        with client.session_transaction() as sess:
+            sess["return_to"] = "/old/stale/path"
+
+        resp = client.get("/auth/login?return_to=/new/path")
+        assert resp.status_code == 200
+
+        with client.session_transaction() as sess:
+            assert sess.get("return_to") == "/new/path"
+
+
 # --- Default Username Derivation ---
 
 
