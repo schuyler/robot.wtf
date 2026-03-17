@@ -161,6 +161,12 @@ def _swap_database(wiki_dir: str) -> None:
     except Exception:
         # Restore previous engine if swap failed
         if current_engine is not None:
+            # Dispose the new engine to avoid leaking its connection pool
+            if engines.get(None) is not current_engine:
+                try:
+                    engines[None].dispose()
+                except Exception:
+                    pass
             engines[None] = current_engine
             app.config["SQLALCHEMY_DATABASE_URI"] = old_uri
         logger.exception("Failed to swap database for wiki %s", wiki_dir)
