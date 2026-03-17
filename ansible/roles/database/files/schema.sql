@@ -61,5 +61,3 @@ CREATE TABLE IF NOT EXISTS reindex_queue (
     queued_at TEXT NOT NULL,
     PRIMARY KEY (wiki_slug, page_path)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS ix_wikis_mcp_token_hash ON wikis (mcp_token_hash);
