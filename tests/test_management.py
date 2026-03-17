@@ -28,7 +28,6 @@ from app.management.routes import (
     validate_slug,
 )
 import app.management.routes as management_routes
-from app.models.acl import AclModel
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
@@ -118,11 +117,6 @@ def wiki_model(db):
 
 
 @pytest.fixture
-def acl_model(db):
-    return AclModel(db)
-
-
-@pytest.fixture
 def owner_user(user_model):
     """Create an owner user with username."""
     return user_model.create(
@@ -188,7 +182,7 @@ def auth_middleware(user_model):
 
 
 @pytest.fixture
-def middleware(auth_middleware, user_model, wiki_model, acl_model, wiki_base):
+def middleware(auth_middleware, user_model, wiki_model, wiki_base):
     """ManagementMiddleware wired to in-memory DB + temp wiki base."""
     inner_app = MagicMock()
     inner_app.return_value = [b"inner app"]
@@ -197,7 +191,6 @@ def middleware(auth_middleware, user_model, wiki_model, acl_model, wiki_base):
         auth_middleware=auth_middleware,
         user_model=user_model,
         wiki_model=wiki_model,
-        acl_model=acl_model,
         wiki_base=wiki_base,
     )
 
@@ -350,7 +343,7 @@ class TestWikiLifecycle:
         status, body = _call_api(middleware, "GET", "/api/wikis/nonexistent")
         assert status == 404
 
-    def test_regenerate_token(self, middleware, owner_user, acl_model):
+    def test_regenerate_token(self, middleware, owner_user):
         """Regenerate MCP token and get a new plaintext token back."""
         _call_api(
             middleware, "POST", "/api/wikis",
@@ -390,91 +383,6 @@ class TestWikiLifecycle:
 
         # Wiki record gone
         assert wiki_model.get("del-wiki") is None
-
-
-# --- ACL Tests ---
-
-
-class TestACLManagement:
-    def test_grant_access(
-        self, middleware, owner_user, collab_user, acl_model
-    ):
-        """Grant editor access to a collaborator."""
-        _call_api(
-            middleware, "POST", "/api/wikis",
-            body={"slug": "acl-wiki", "display_name": "ACL Wiki"},
-        )
-        status, body = _call_api(
-            middleware, "POST", "/api/wikis/acl-wiki/acl",
-            body={"grantee_did": "did:plc:collab", "role": "editor"},
-        )
-        assert status == 201
-        assert body["acl"]["grantee_did"] == "did:plc:collab"
-        assert body["acl"]["role"] == "editor"
-
-    def test_list_acl(self, middleware, owner_user, collab_user):
-        """List ACL entries for a wiki."""
-        _call_api(
-            middleware, "POST", "/api/wikis",
-            body={"slug": "acl-list", "display_name": "ACL List"},
-        )
-        _call_api(
-            middleware, "POST", "/api/wikis/acl-list/acl",
-            body={"grantee_did": "did:plc:collab", "role": "viewer"},
-        )
-        status, body = _call_api(
-            middleware, "GET", "/api/wikis/acl-list/acl"
-        )
-        assert status == 200
-        # Should have owner + 1 collaborator
-        assert len(body["acls"]) == 2
-
-    def test_revoke_access(self, middleware, owner_user, collab_user, acl_model):
-        """Revoke a collaborator's access."""
-        _call_api(
-            middleware, "POST", "/api/wikis",
-            body={"slug": "revoke-wiki", "display_name": "Revoke Wiki"},
-        )
-        _call_api(
-            middleware, "POST", "/api/wikis/revoke-wiki/acl",
-            body={"grantee_did": "did:plc:collab", "role": "editor"},
-        )
-        status, body = _call_api(
-            middleware, "DELETE", "/api/wikis/revoke-wiki/acl/did:plc:collab"
-        )
-        assert status == 200
-        assert body["revoked"] is True
-
-        # Verify ACL gone
-        assert acl_model.get("revoke-wiki", "did:plc:collab") is None
-
-    def test_cannot_revoke_owner(self, middleware, owner_user):
-        """Owner cannot revoke their own access."""
-        _call_api(
-            middleware, "POST", "/api/wikis",
-            body={"slug": "own-wiki", "display_name": "Own Wiki"},
-        )
-        status, body = _call_api(
-            middleware, "DELETE", "/api/wikis/own-wiki/acl/did:plc:owner"
-        )
-        assert status == 400
-        assert "owner" in body["error"].lower()
-
-    def test_grant_requires_ownership(
-        self, middleware, owner_user, collab_user, auth_middleware, user_model
-    ):
-        """Non-owner cannot grant access."""
-        _call_api(
-            middleware, "POST", "/api/wikis",
-            body={"slug": "perm-wiki", "display_name": "Perm Wiki"},
-        )
-        # Switch to collab user
-        _set_auth_user(auth_middleware, user_model, "did:plc:collab")
-        status, body = _call_api(
-            middleware, "POST", "/api/wikis/perm-wiki/acl",
-            body={"grantee_did": "did:plc:collab", "role": "editor"},
-        )
-        assert status == 403
 
 
 # --- Tier Limit Tests ---
@@ -576,18 +484,13 @@ class TestCreateWikiValidation:
 
 class TestDeleteOwnership:
     def test_non_owner_cannot_delete(
-        self, middleware, owner_user, collab_user, acl_model,
+        self, middleware, owner_user, collab_user,
         auth_middleware, user_model
     ):
         """Only the owner can delete a wiki."""
         _call_api(
             middleware, "POST", "/api/wikis",
             body={"slug": "guarded-wiki", "display_name": "Guarded"},
-        )
-        # Grant collab access
-        _call_api(
-            middleware, "POST", "/api/wikis/guarded-wiki/acl",
-            body={"grantee_did": "did:plc:collab", "role": "editor"},
         )
         # Switch to collab user
         _set_auth_user(auth_middleware, user_model, "did:plc:collab")

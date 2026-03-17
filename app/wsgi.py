@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 
-from app.auth.acl import AclEnforcer
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthMiddleware
 from app.db import get_connection
@@ -58,7 +57,6 @@ def _build_app():
         platform_jwt=platform_jwt,
         user_model=user_model,
     )
-    acl_enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
 
     # Start with the Otterwiki WSGI app
     wsgi_app = otterwiki_app
@@ -77,7 +75,6 @@ def _build_app():
         wsgi_app = TenantResolver(
             wsgi_app,
             auth_middleware=auth_middleware,
-            acl_enforcer=acl_enforcer,
             wiki_model=wiki_model,
             user_model=user_model,
         )

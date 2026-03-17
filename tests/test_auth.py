@@ -11,7 +11,6 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from app.auth.acl import AclEnforcer
 from app.auth.jwt import PlatformJWT
 from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
 from app.auth.permissions import (
@@ -133,113 +132,6 @@ class TestPermissions:
     def test_format_permission_header(self):
         assert format_permission_header((READ, WRITE)) == "READ,WRITE"
         assert format_permission_header((READ,)) == "READ"
-
-
-# --- ACL Enforcer ---
-
-
-class TestAclEnforcer:
-    def test_check_access_granted(self, acl_model, wiki_model, sample_wiki):
-        acl_model.create(
-            wiki_slug="test-wiki",
-            grantee_did="did:plc:abc123",
-            role="editor",
-            granted_by="did:plc:abc123",
-        )
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        result = enforcer.check_access("did:plc:abc123", "test-wiki")
-        assert result["role"] == "editor"
-        assert result["permissions"] == (READ, WRITE, UPLOAD)
-
-    def test_check_access_denied(self, acl_model, wiki_model, sample_wiki):
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        with pytest.raises(AuthError) as exc_info:
-            enforcer.check_access("did:plc:nobody", "test-wiki")
-        assert exc_info.value.status == 403
-
-    def test_check_public_access_allowed(self, db, user_model, wiki_model, acl_model):
-        user_model.create(
-            did="did:plc:pub",
-            handle="pub.bsky.social",
-            display_name="Pub",
-            username="pub",
-        )
-        wiki_model.create(
-            slug="public-wiki",
-            owner_did="did:plc:pub",
-            display_name="Public Wiki",
-            repo_path="/srv/data/wikis/public-wiki/repo",
-            mcp_token_hash="$2b$12$hash",
-            is_public=True,
-        )
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        result = enforcer.check_public_access("public-wiki")
-        assert result["role"] == "public"
-        assert result["permissions"] == (READ,)
-
-    def test_check_public_access_ignores_is_public_flag(
-        self, db, user_model, wiki_model, acl_model
-    ):
-        """check_public_access grants READ regardless of is_public value.
-
-        READ_ACCESS in wiki.db is now the sole gating mechanism.
-        """
-        user_model.create(
-            did="did:plc:priv",
-            handle="priv.bsky.social",
-            display_name="Priv",
-            username="priv",
-        )
-        wiki_model.create(
-            slug="private-flag-wiki",
-            owner_did="did:plc:priv",
-            display_name="Private Flag Wiki",
-            repo_path="/srv/data/wikis/private-flag-wiki/repo",
-            mcp_token_hash="$2b$12$hash",
-            is_public=False,  # is_public=0 should no longer block anonymous access
-        )
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        result = enforcer.check_public_access("private-flag-wiki")
-        assert result["role"] == "public"
-        assert result["permissions"] == (READ,)
-
-    def test_check_public_access_not_found(self, wiki_model, acl_model):
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        with pytest.raises(AuthError) as exc_info:
-            enforcer.check_public_access("nonexistent")
-        assert exc_info.value.status == 404
-
-    def test_check_bearer_token(self, db, user_model, wiki_model, acl_model):
-        import bcrypt
-
-        user_model.create(
-            did="did:plc:tokuser",
-            handle="tok.bsky.social",
-            display_name="Token User",
-            username="tokuser",
-        )
-        plaintext = "my-secret-token"
-        hashed = bcrypt.hashpw(
-            plaintext.encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
-        wiki_model.create(
-            slug="tok-wiki",
-            owner_did="did:plc:tokuser",
-            display_name="Token Wiki",
-            repo_path="/srv/data/wikis/tok-wiki/repo",
-            mcp_token_hash=hashed,
-        )
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        result = enforcer.check_bearer_token(plaintext)
-        assert result["role"] == "token"
-        assert result["wiki"]["slug"] == "tok-wiki"
-        assert result["permissions"] == (READ, WRITE, UPLOAD)
-
-    def test_check_bearer_token_invalid(self, wiki_model, acl_model):
-        enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        with pytest.raises(AuthError) as exc_info:
-            enforcer.check_bearer_token("bad-token")
-        assert exc_info.value.status == 401
 
 
 # --- AuthMiddleware ---

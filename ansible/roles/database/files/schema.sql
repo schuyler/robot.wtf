@@ -21,15 +21,6 @@ CREATE TABLE IF NOT EXISTS wikis (
     disk_usage_bytes INTEGER DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS acls (
-    wiki_slug TEXT NOT NULL REFERENCES wikis(slug),
-    grantee_did TEXT NOT NULL REFERENCES users(did),
-    role TEXT NOT NULL,
-    granted_by TEXT NOT NULL,
-    granted_at TEXT NOT NULL,
-    PRIMARY KEY (wiki_slug, grantee_did)
-);
-
 CREATE TABLE IF NOT EXISTS oauth_auth_requests (
     state TEXT PRIMARY KEY,
     authserver_iss TEXT NOT NULL,

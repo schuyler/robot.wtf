@@ -21,7 +21,6 @@ import pytest
 from app.auth.jwt import PlatformJWT
 from app.auth.middleware import AuthMiddleware
 from app.db import init_schema
-from app.models.acl import AclModel
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
@@ -82,11 +81,6 @@ def wiki_model(db):
 
 
 @pytest.fixture
-def acl_model(db):
-    return AclModel(db)
-
-
-@pytest.fixture
 def platform_jwt(rsa_keys):
     private_key, public_key = rsa_keys
     return PlatformJWT(private_key, public_key)
@@ -133,7 +127,7 @@ def collab_token(platform_jwt, collab_user):
 
 
 @pytest.fixture
-def flask_app(rsa_keys, user_model, wiki_model, acl_model, platform_jwt, tmp_path):
+def flask_app(rsa_keys, user_model, wiki_model, platform_jwt, tmp_path):
     """Create a configured Flask test app."""
     import os
     os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
@@ -150,7 +144,6 @@ def flask_app(rsa_keys, user_model, wiki_model, acl_model, platform_jwt, tmp_pat
     app.config["AUTH_MIDDLEWARE"] = auth_middleware
     app.config["USER_MODEL"] = user_model
     app.config["WIKI_MODEL"] = wiki_model
-    app.config["ACL_MODEL"] = acl_model
     app.config["WIKI_BASE"] = str(tmp_path / "wikis")
 
     return app
@@ -218,7 +211,7 @@ class TestDashboard:
         assert "Create your wiki" in html
 
     def test_dashboard_with_wiki(
-        self, client, owner_token, owner_user, wiki_model, acl_model
+        self, client, owner_token, owner_user, wiki_model
     ):
         """Dashboard with a wiki shows wiki info."""
         wiki_model.create(
@@ -259,7 +252,7 @@ class TestWikiCreate:
     def test_create_wiki_success(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
-        """POST /app/create creates wiki and redirects to MCP page."""
+        """POST /app/create creates wiki and redirects to dashboard."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.post(
             "/app/create",
@@ -271,7 +264,7 @@ class TestWikiCreate:
             follow_redirects=False,
         )
         assert resp.status_code == 302
-        assert "/app/wiki/test-wiki/mcp" in resp.headers["Location"]
+        assert "/app/" in resp.headers["Location"]
 
         # Wiki should exist
         wiki = wiki_model.get("test-wiki")
@@ -282,7 +275,7 @@ class TestWikiCreate:
     def test_create_wiki_shows_token(
         self, mock_init, client, owner_token, owner_user
     ):
-        """MCP page after creation should show the bearer token."""
+        """Dashboard after creation should show the bearer token."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         # Create wiki
         resp = client.post(
@@ -292,7 +285,7 @@ class TestWikiCreate:
         )
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "bearer token" in html.lower() or "Bearer token" in html
+        assert "bearer token" in html.lower() or "MCP" in html
 
     def test_create_wiki_invalid_slug(self, client, owner_token, owner_user):
         client.set_cookie("platform_token", owner_token, domain="localhost")
@@ -452,151 +445,32 @@ class TestWikiSettings:
         assert resp.status_code == 302  # redirects to dashboard
 
 
-# --- Collaborator tests ---
+# --- MCP tests (on dashboard) ---
 
 
-class TestCollaborators:
+class TestMCPOnDashboard:
     @patch("app.api_server._init_wiki_repo")
-    def test_collaborators_page_renders(
+    def test_dashboard_shows_mcp_info(
         self, mock_init, client, owner_token, owner_user
     ):
-        client.set_cookie("platform_token", owner_token, domain="localhost")
-        client.post(
-            "/app/create",
-            data={"slug": "collab-wiki", "display_name": "Collab Wiki"},
-        )
-        resp = client.get("/app/wiki/collab-wiki/collaborators")
-        assert resp.status_code == 200
-        html = resp.data.decode()
-        assert "Collaborators" in html
-        assert "Add collaborator" in html
-
-    @patch("app.api_server._init_wiki_repo")
-    def test_add_collaborator(
-        self, mock_init, client, owner_token, owner_user, collab_user, acl_model
-    ):
-        client.set_cookie("platform_token", owner_token, domain="localhost")
-        client.post(
-            "/app/create",
-            data={"slug": "add-wiki", "display_name": "Add Wiki"},
-        )
-        resp = client.post(
-            "/app/wiki/add-wiki/collaborators/add",
-            data={"grantee_handle": "did:plc:collab", "role": "editor"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        acl = acl_model.get("add-wiki", "did:plc:collab")
-        assert acl is not None
-        assert acl["role"] == "editor"
-
-    @patch("app.api_server._init_wiki_repo")
-    def test_add_collaborator_by_handle(
-        self, mock_init, client, owner_token, owner_user, collab_user, acl_model
-    ):
-        client.set_cookie("platform_token", owner_token, domain="localhost")
-        client.post(
-            "/app/create",
-            data={"slug": "handle-wiki", "display_name": "Handle Wiki"},
-        )
-        resp = client.post(
-            "/app/wiki/handle-wiki/collaborators/add",
-            data={
-                "grantee_handle": "collab.bsky.social",
-                "role": "viewer",
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        acl = acl_model.get("handle-wiki", "did:plc:collab")
-        assert acl is not None
-        assert acl["role"] == "viewer"
-
-    @patch("app.api_server._init_wiki_repo")
-    def test_revoke_collaborator(
-        self, mock_init, client, owner_token, owner_user, collab_user, acl_model
-    ):
-        client.set_cookie("platform_token", owner_token, domain="localhost")
-        client.post(
-            "/app/create",
-            data={"slug": "revoke-wiki", "display_name": "Revoke Wiki"},
-        )
-        client.post(
-            "/app/wiki/revoke-wiki/collaborators/add",
-            data={"grantee_handle": "did:plc:collab", "role": "editor"},
-        )
-        resp = client.post(
-            "/app/wiki/revoke-wiki/collaborators/revoke",
-            data={"grantee_did": "did:plc:collab"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        assert acl_model.get("revoke-wiki", "did:plc:collab") is None
-
-    @patch("app.api_server._init_wiki_repo")
-    def test_cannot_revoke_owner(
-        self, mock_init, client, owner_token, owner_user, acl_model
-    ):
-        client.set_cookie("platform_token", owner_token, domain="localhost")
-        client.post(
-            "/app/create",
-            data={"slug": "own-wiki", "display_name": "Own Wiki"},
-        )
-        resp = client.post(
-            "/app/wiki/own-wiki/collaborators/revoke",
-            data={"grantee_did": "did:plc:owner"},
-            follow_redirects=True,
-        )
-        html = resp.data.decode()
-        assert "Cannot revoke owner" in html
-
-
-# --- MCP instructions tests ---
-
-
-class TestMCPInstructions:
-    @patch("app.api_server._init_wiki_repo")
-    def test_mcp_page_renders(
-        self, mock_init, client, owner_token, owner_user
-    ):
+        """Dashboard shows MCP endpoint and claude mcp add command."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         client.post(
             "/app/create",
             data={"slug": "mcp-wiki", "display_name": "MCP Wiki"},
         )
-        # Token is shown on first visit (via session)
-        resp = client.get("/app/wiki/mcp-wiki/mcp")
+        resp = client.get("/app/")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "MCP endpoint" in html
-        assert "claude mcp add" in html
+        assert "MCP" in html
         assert "mcp-wiki" in html
-
-    @patch("app.api_server._init_wiki_repo")
-    def test_mcp_token_shown_once(
-        self, mock_init, client, owner_token, owner_user
-    ):
-        """Token is shown after creation, then gone on second visit."""
-        client.set_cookie("platform_token", owner_token, domain="localhost")
-        # Create wiki (sets token in session)
-        client.post(
-            "/app/create",
-            data={"slug": "once-wiki", "display_name": "Once Wiki"},
-        )
-        # First visit to MCP page: token should be visible
-        resp1 = client.get("/app/wiki/once-wiki/mcp")
-        html1 = resp1.data.decode()
-        assert "mcp-token" in html1  # the token display element
-
-        # Second visit: token should be gone
-        resp2 = client.get("/app/wiki/once-wiki/mcp")
-        html2 = resp2.data.decode()
-        assert "Copy this token now" not in html2
+        assert "claude mcp add" in html
 
     @patch("app.api_server._init_wiki_repo")
     def test_regenerate_token(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
+        """Regenerate MCP token changes the hash."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         client.post(
             "/app/create",

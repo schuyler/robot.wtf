@@ -20,7 +20,6 @@ from typing import Any, Callable
 from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
 from app.management.token import generate_mcp_token
 from app.resolver import _init_wiki_db, _initialized_dbs
-from app.models.acl import AclModel
 from app.models.user import RESERVED_USERNAMES, UserModel, validate_username
 from app.models.wiki import WikiModel
 
@@ -72,10 +71,6 @@ _AUTH_CALLBACK = re.compile(r"^/api/auth/callback$")
 _WIKIS_COLLECTION = re.compile(r"^/api/wikis$")
 _WIKI_DETAIL = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)$")
 _WIKI_TOKEN = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)/token$")
-_WIKI_ACL_COLLECTION = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)/acl$")
-_WIKI_ACL_DETAIL = re.compile(
-    r"^/api/wikis/([a-zA-Z0-9_-]+)/acl/([^\s/]+)$"
-)
 
 # Base path for wiki repos
 WIKI_BASE = "/srv/data/wikis"
@@ -158,14 +153,13 @@ class ManagementMiddleware:
         auth_middleware: AuthMiddleware,
         user_model: UserModel,
         wiki_model: WikiModel,
-        acl_model: AclModel,
+        acl_model=None,  # kept for backwards compatibility, no longer used
         wiki_base: str | None = None,
     ):
         self._app = app
         self._auth = auth_middleware
         self._users = user_model
         self._wikis = wiki_model
-        self._acls = acl_model
         self._wiki_base = wiki_base or os.environ.get("WIKI_BASE", WIKI_BASE)
 
     def __call__(self, environ: dict, start_response: Callable) -> Any:
@@ -243,22 +237,6 @@ class ManagementMiddleware:
             slug = m.group(1)
             if method == "POST":
                 return self._regenerate_token(user, slug)
-            return 405, {"error": "Method not allowed"}
-
-        m = _WIKI_ACL_DETAIL.match(path)
-        if m:
-            slug, grantee_did = m.group(1), m.group(2)
-            if method == "DELETE":
-                return self._revoke_acl(user, slug, grantee_did)
-            return 405, {"error": "Method not allowed"}
-
-        m = _WIKI_ACL_COLLECTION.match(path)
-        if m:
-            slug = m.group(1)
-            if method == "POST":
-                return self._grant_acl(user, slug, environ)
-            if method == "GET":
-                return self._list_acl(user, slug)
             return 405, {"error": "Method not allowed"}
 
         m = _WIKI_DETAIL.match(path)
@@ -376,14 +354,6 @@ class ManagementMiddleware:
             logger.error("Failed to create wiki record: %s", e)
             return 409, {"error": "Wiki already exists"}
 
-        # Create owner ACL
-        self._acls.create(
-            wiki_slug=slug,
-            grantee_did=user.user_did,
-            role="owner",
-            granted_by=user.user_did,
-        )
-
         # Init git repo + bootstrap
         try:
             _init_wiki_repo(
@@ -393,16 +363,16 @@ class ManagementMiddleware:
             logger.error("Failed to init wiki repo: %s", e)
             try:
                 self._wikis.delete(slug)
-                self._acls.delete(slug, user.user_did)
             except Exception:
                 pass
             return 500, {"error": "Failed to initialize wiki repository"}
 
-        # Initialize per-wiki database
+        # Initialize per-wiki database, seeding the owner
         wiki_dir = os.path.dirname(repo_path)
         db_path = os.path.join(wiki_dir, "wiki.db")
+        owner_handle = user.handle.split(".")[0] if user.handle else None
         try:
-            _init_wiki_db(db_path, site_name=display_name)
+            _init_wiki_db(db_path, site_name=display_name, owner_handle=owner_handle)
         except Exception:
             logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 
@@ -426,11 +396,9 @@ class ManagementMiddleware:
         if not wiki:
             return 404, {"error": "Wiki not found"}
 
-        # Verify the user is the owner or has ACL access
+        # Only the owner can view wiki details via the management API
         if wiki["owner_did"] != user.user_did:
-            acl = self._acls.get(slug, user.user_did)
-            if not acl:
-                return 403, {"error": "Access denied"}
+            return 403, {"error": "Access denied"}
 
         return 200, {
             "wiki": wiki,
@@ -440,14 +408,13 @@ class ManagementMiddleware:
     def _delete_wiki(
         self, user: AuthenticatedUser, slug: str
     ) -> tuple[int, dict]:
-        # Verify ownership
-        acl = self._acls.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
-            return 403, {"error": "Only the owner can delete a wiki"}
-
         wiki = self._wikis.get(slug)
         if not wiki:
             return 404, {"error": "Wiki not found"}
+
+        # Verify ownership
+        if wiki.get("owner_did") != user.user_did:
+            return 403, {"error": "Only the owner can delete a wiki"}
 
         # Remove repo from disk
         repo_path = wiki.get("repo_path", "")
@@ -457,11 +424,6 @@ class ManagementMiddleware:
             # Clear DB initialization cache
             db_path = os.path.join(wiki_dir, "wiki.db")
             _initialized_dbs.discard(db_path)
-
-        # Delete all ACLs for this wiki
-        acls = self._acls.list_by_wiki(slug)
-        for acl_entry in acls:
-            self._acls.delete(slug, acl_entry["grantee_did"])
 
         # Delete wiki record
         self._wikis.delete(slug)
@@ -478,76 +440,17 @@ class ManagementMiddleware:
     def _regenerate_token(
         self, user: AuthenticatedUser, slug: str
     ) -> tuple[int, dict]:
-        acl = self._acls.get(slug, user.user_did)
-        if not acl or acl.get("role") != "owner":
-            return 403, {"error": "Only the owner can regenerate the token"}
-
         wiki = self._wikis.get(slug)
         if not wiki:
             return 404, {"error": "Wiki not found"}
+
+        if wiki.get("owner_did") != user.user_did:
+            return 403, {"error": "Only the owner can regenerate the token"}
 
         plaintext_token, token_hash = generate_mcp_token()
         self._wikis.update(slug, mcp_token_hash=token_hash)
 
         return 200, {"mcp_token": plaintext_token}
-
-    # --- ACL management ---
-
-    def _grant_acl(
-        self, user: AuthenticatedUser, slug: str, environ: dict
-    ) -> tuple[int, dict]:
-        body = _read_json_body(environ)
-        grantee_did = body.get("grantee_did", "").strip()
-        role = body.get("role", "").strip()
-
-        if not grantee_did:
-            return 400, {"error": "grantee_did is required"}
-        if role not in ("editor", "viewer"):
-            return 400, {"error": "role must be editor or viewer"}
-
-        # Verify caller is owner
-        caller_acl = self._acls.get(slug, user.user_did)
-        if not caller_acl or caller_acl.get("role") != "owner":
-            return 403, {"error": "Only the owner can grant access"}
-
-        # Check collaborator limit (count non-owner ACL entries)
-        # Verify grantee exists
-        grantee = self._users.get(grantee_did)
-        if not grantee:
-            return 404, {"error": "User not found"}
-
-        acl_entry = self._acls.create(
-            wiki_slug=slug,
-            grantee_did=grantee_did,
-            role=role,
-            granted_by=user.user_did,
-        )
-
-        return 201, {"acl": acl_entry}
-
-    def _revoke_acl(
-        self, user: AuthenticatedUser, slug: str, grantee_did: str
-    ) -> tuple[int, dict]:
-        caller_acl = self._acls.get(slug, user.user_did)
-        if not caller_acl or caller_acl.get("role") != "owner":
-            return 403, {"error": "Only the owner can revoke access"}
-
-        if grantee_did == user.user_did:
-            return 400, {"error": "Cannot revoke owner access"}
-
-        self._acls.delete(slug, grantee_did)
-        return 200, {"revoked": True}
-
-    def _list_acl(
-        self, user: AuthenticatedUser, slug: str
-    ) -> tuple[int, dict]:
-        caller_acl = self._acls.get(slug, user.user_did)
-        if not caller_acl:
-            return 403, {"error": "Access denied"}
-
-        acls = self._acls.list_by_wiki(slug)
-        return 200, {"acls": acls}
-
 
 # --- Helpers ---
 

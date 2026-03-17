@@ -2,12 +2,23 @@
 
 Resolves incoming requests to a specific wiki based on Host header
 (subdomain = wiki slug on robot.wtf). Looks up the wiki by slug,
-authenticates, checks ACL, swaps otterwiki storage singletons,
-injects proxy headers, and delegates.
+authenticates, checks per-wiki user table for permissions, swaps
+otterwiki storage singletons, injects proxy headers, and delegates.
 
 On robot.wtf the Host pattern is {slug}.robot.wtf (wiki slug is the
 subdomain directly, unlike wikibot.io where subdomain = username and
 path = wiki slug).
+
+Permission flow:
+1. Host header → wiki slug → lookup `wikis` table for wiki dict + owner_did
+2. _swap_storage() + _swap_database() — BEFORE auth resolution
+3. Authenticate (JWT/cookie/bearer/anonymous) → get user handle
+4. If owner_did matches authenticated user → ADMIN permissions
+5. If authenticated → query per-wiki user table by email = @{handle}
+   → derive permissions from flags (is_admin, allow_read, allow_write, etc.)
+6. If not in per-wiki user table → fall through to wiki-level preferences
+7. If wiki requires APPROVED and user not in table or not approved → deny
+8. Bearer token path: call WikiModel.get_by_token() directly
 """
 
 from __future__ import annotations
@@ -19,10 +30,9 @@ import subprocess
 from typing import Any, Callable
 from urllib.parse import quote
 
-from app.auth.acl import AclEnforcer
 from app.auth.headers import build_proxy_headers
 from app.auth.middleware import AuthError, AuthMiddleware
-from app.auth.permissions import READ, WRITE, UPLOAD, format_permission_header
+from app.auth.permissions import READ, WRITE, UPLOAD, ADMIN, format_permission_header
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +52,12 @@ QUOTA_BYTES = 50 * 1024 * 1024  # 50MB
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
 
 
-def _init_wiki_db(db_path: str, site_name: str = None, is_public: bool = True) -> None:
+def _init_wiki_db(
+    db_path: str,
+    site_name: str = None,
+    is_public: bool = True,
+    owner_handle: str = None,
+) -> None:
     """Create otterwiki tables in a per-wiki SQLite database.
 
     Uses raw SQL to avoid importing otterwiki models.
@@ -54,6 +69,8 @@ def _init_wiki_db(db_path: str, site_name: str = None, is_public: bool = True) -
         is_public: Whether the wiki is publicly readable. If False and
             READ_ACCESS is not already set, seeds READ_ACCESS=REGISTERED
             to preserve the wiki's private status after is_public removal.
+        owner_handle: If provided, seeds the owner into the per-wiki user
+            table as is_admin=True, is_approved=True (Unit 3).
     """
     if db_path in _initialized_dbs:
         return
@@ -112,6 +129,16 @@ def _init_wiki_db(db_path: str, site_name: str = None, is_public: bool = True) -
             conn.execute(
                 "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
                 ("READ_ACCESS", "REGISTERED"),
+            )
+        # Unit 3: seed wiki owner into the per-wiki user table so the owner
+        # has admin access through the per-wiki user table path.
+        if owner_handle:
+            conn.execute(
+                """INSERT OR IGNORE INTO "user"
+                   (name, email, is_admin, is_approved, allow_read, allow_write,
+                    allow_upload, first_seen, last_seen)
+                   VALUES (?, ?, 1, 1, 1, 1, 1, datetime('now'), datetime('now'))""",
+                (owner_handle, f"@{owner_handle}"),
             )
         conn.commit()
     finally:
@@ -228,15 +255,20 @@ def _get_wiki_access_config() -> dict[str, str]:
 
 
 def _apply_wiki_access_restrictions(
-    permissions: list[str], is_authenticated: bool, config: dict[str, str] | None = None
+    permissions: list[str],
+    is_authenticated: bool,
+    config: dict[str, str] | None = None,
+    per_wiki_user: dict | None = None,
 ) -> list[str]:
     """Restrict proxy header permissions based on per-wiki access preferences.
 
-    Platform ACL grants the ceiling. Per-wiki preferences (READ_ACCESS,
-    WRITE_ACCESS, ATTACHMENT_ACCESS) can restrict further but never escalate.
+    Per-wiki preferences (READ_ACCESS, WRITE_ACCESS, ATTACHMENT_ACCESS) can
+    restrict access. APPROVED access level checks per_wiki_user for approval.
 
-    Access levels: ANONYMOUS (no restriction), REGISTERED (auth required),
-    APPROVED (treated as REGISTERED for now — full support needs user tracking).
+    Access levels:
+    - ANONYMOUS: no restriction
+    - REGISTERED: auth required
+    - APPROVED: auth required AND user must be in per-wiki table with is_approved=True
 
     ADMIN is never stripped.
     """
@@ -250,21 +282,43 @@ def _apply_wiki_access_restrictions(
 
     result = list(permissions)
 
-    # READ_ACCESS restriction: if not ANONYMOUS and user not authenticated,
-    # strip READ, WRITE, and UPLOAD (can't write if can't read)
-    if read_access != "ANONYMOUS" and not is_authenticated:
-        result = [p for p in result if p not in (READ, WRITE, UPLOAD)]
-        return result  # No need to check further; everything is already stripped
+    def _is_approved() -> bool:
+        """Check if the user is approved in the per-wiki user table."""
+        if per_wiki_user is None:
+            return False
+        return bool(per_wiki_user.get("is_approved"))
 
-    # WRITE_ACCESS restriction: if not ANONYMOUS and user not authenticated,
-    # strip WRITE and UPLOAD
-    if write_access != "ANONYMOUS" and not is_authenticated:
-        result = [p for p in result if p not in (WRITE, UPLOAD)]
+    # READ_ACCESS restriction
+    if read_access == "ANONYMOUS":
+        pass  # No restriction
+    elif read_access == "REGISTERED":
+        if not is_authenticated:
+            result = [p for p in result if p not in (READ, WRITE, UPLOAD)]
+            return result
+    elif read_access == "APPROVED":
+        if not is_authenticated or not _is_approved():
+            result = [p for p in result if p not in (READ, WRITE, UPLOAD)]
+            return result
 
-    # ATTACHMENT_ACCESS restriction: if not ANONYMOUS and user not authenticated,
-    # strip UPLOAD
-    if attachment_access != "ANONYMOUS" and not is_authenticated:
-        result = [p for p in result if p != UPLOAD]
+    # WRITE_ACCESS restriction
+    if write_access == "ANONYMOUS":
+        pass
+    elif write_access == "REGISTERED":
+        if not is_authenticated:
+            result = [p for p in result if p not in (WRITE, UPLOAD)]
+    elif write_access == "APPROVED":
+        if not is_authenticated or not _is_approved():
+            result = [p for p in result if p not in (WRITE, UPLOAD)]
+
+    # ATTACHMENT_ACCESS restriction
+    if attachment_access == "ANONYMOUS":
+        pass
+    elif attachment_access == "REGISTERED":
+        if not is_authenticated:
+            result = [p for p in result if p != UPLOAD]
+    elif attachment_access == "APPROVED":
+        if not is_authenticated or not _is_approved():
+            result = [p for p in result if p != UPLOAD]
 
     return result
 
@@ -421,11 +475,12 @@ class TenantResolver:
 
     For each request:
     1. Extracts wiki slug from Host subdomain
-    2. Authenticates (JWT / bearer token / anonymous)
-    3. Checks ACL
-    4. Swaps otterwiki globals (storage, config)
-    5. Injects proxy headers
-    6. Delegates to the wrapped WSGI app
+    2. Swaps otterwiki globals (storage, config) — BEFORE auth
+    3. Authenticates (JWT / bearer token / anonymous)
+    4. Derives permissions from wiki owner_did or per-wiki user table
+    5. Applies per-wiki access restrictions
+    6. Injects proxy headers
+    7. Delegates to the wrapped WSGI app
     """
 
     def __init__(
@@ -433,13 +488,11 @@ class TenantResolver:
         app: Any,
         *,
         auth_middleware: AuthMiddleware,
-        acl_enforcer: AclEnforcer,
         wiki_model: Any,
         user_model: Any,
     ):
         self._app = app
         self._auth = auth_middleware
-        self._acl = acl_enforcer
         self._wikis = wiki_model
         self._users = user_model
 
@@ -473,6 +526,21 @@ class TenantResolver:
                 )
             # Web UI writes: continue to auth, then strip write permissions below
 
+        # Build repo path
+        repo_path = wiki.get(
+            "repo_path",
+            os.path.join(WIKI_BASE, wiki_slug, "repo"),
+        )
+
+        # Swap otterwiki globals BEFORE auth resolution (loads per-wiki preferences)
+        self._swap_storage(repo_path)
+        wiki_dir = os.path.dirname(repo_path)
+        wiki_is_public = bool(wiki.get("is_public", True))
+        _swap_database(wiki_dir, is_public=wiki_is_public, display_name=wiki.get("display_name"))
+
+        # Fetch wiki access config (after storage swap so preferences are loaded)
+        wiki_access_config = _get_wiki_access_config()
+
         # Authenticate and authorize
         try:
             auth_result = self._resolve_auth(environ, wiki_slug, wiki)
@@ -490,30 +558,17 @@ class TenantResolver:
             stripped = [p for p in raw.split(",") if p not in (WRITE, UPLOAD)]
             proxy_headers[perms_key] = format_permission_header(stripped)
 
-        # Build repo path
-        repo_path = wiki.get(
-            "repo_path",
-            os.path.join(WIKI_BASE, wiki_slug, "repo"),
-        )
-
-        # Swap otterwiki globals (loads per-wiki preferences into app.config)
-        self._swap_storage(repo_path)
-        wiki_dir = os.path.dirname(repo_path)
-        wiki_is_public = bool(wiki.get("is_public", True))
-        _swap_database(wiki_dir, is_public=wiki_is_public, display_name=wiki.get("display_name"))
-
-        # Fetch wiki access config once (after storage swap so preferences are loaded)
-        wiki_access_config = _get_wiki_access_config()
-
-        # Apply per-wiki access restrictions based on preferences now loaded
-        # into app.config. Bearer tokens (MCP clients) bypass restrictions.
+        # Apply per-wiki access restrictions. Bearer tokens (MCP clients) bypass.
         if not auth_result.get("is_bearer_token"):
             proxy_headers = auth_result["proxy_headers"]
             perms_key = "x-otterwiki-permissions"
             raw = proxy_headers.get(perms_key, "")
             permissions = [p for p in raw.split(",") if p]
             is_authenticated = auth_result.get("is_authenticated", False)
-            restricted = _apply_wiki_access_restrictions(permissions, is_authenticated, wiki_access_config)
+            per_wiki_user = auth_result.get("per_wiki_user")
+            restricted = _apply_wiki_access_restrictions(
+                permissions, is_authenticated, wiki_access_config, per_wiki_user
+            )
             proxy_headers[perms_key] = format_permission_header(restricted)
 
         # If READ_ACCESS requires authentication and anonymous user: deny
@@ -543,6 +598,61 @@ class TenantResolver:
 
         return self._app(environ, start_response)
 
+    def _get_per_wiki_user(self, handle: str) -> dict | None:
+        """Query per-wiki user table for a handle. Returns user dict or None.
+
+        The per-wiki user table uses email = @{handle} as the lookup key.
+        This must be called AFTER _swap_database() so the correct DB is active.
+        """
+        try:
+            from otterwiki.models import User
+            user = User.query.filter_by(email=f"@{handle}").first()
+            if user:
+                return {
+                    "is_admin": bool(user.is_admin),
+                    "is_approved": bool(user.is_approved),
+                    "allow_read": bool(user.allow_read),
+                    "allow_write": bool(user.allow_write),
+                    "allow_upload": bool(user.allow_upload),
+                }
+        except BaseException:
+            pass
+        return None
+
+    def _permissions_for_user(
+        self, wiki: dict[str, Any], handle: str, user_did: str
+    ) -> tuple[tuple[str, ...], dict | None]:
+        """Derive permissions for an authenticated user.
+
+        Returns (permissions_tuple, per_wiki_user_dict_or_None).
+
+        Priority:
+        1. owner_did match → ADMIN
+        2. per-wiki user table (is_admin) → ADMIN
+        3. per-wiki user table flags → derive from allow_* flags
+        4. fall through → (READ,) as default for authenticated users
+        """
+        owner_did = wiki.get("owner_did", "")
+        if owner_did and owner_did == user_did:
+            return (READ, WRITE, UPLOAD, ADMIN), None
+
+        per_wiki_user = self._get_per_wiki_user(handle)
+        if per_wiki_user:
+            if per_wiki_user.get("is_admin"):
+                return (READ, WRITE, UPLOAD, ADMIN), per_wiki_user
+            perms = []
+            if per_wiki_user.get("allow_read"):
+                perms.append(READ)
+            if per_wiki_user.get("allow_write"):
+                perms.append(WRITE)
+            if per_wiki_user.get("allow_upload"):
+                perms.append(UPLOAD)
+            return tuple(perms) if perms else (READ,), per_wiki_user
+
+        # Not in per-wiki table — authenticated user gets READ by default;
+        # per-wiki access preferences (REGISTERED/APPROVED) may restrict further.
+        return (READ,), None
+
     def _resolve_auth(
         self,
         environ: dict[str, Any],
@@ -551,11 +661,11 @@ class TenantResolver:
     ) -> dict[str, Any]:
         """Resolve authentication and authorization.
 
-        Three paths:
-        1. Bearer token (MCP) -- opaque token, no dots
-        2. Platform JWT -- three dot-separated segments
-        3. Cookie -- platform_token cookie
-        4. Anonymous -- no credentials
+        Paths:
+        1. Bearer token (MCP) — opaque token, no dots → get_by_token()
+        2. Platform JWT — three dot-separated segments
+        3. Cookie — platform_token cookie
+        4. Anonymous — no credentials
         """
         authorization = environ.get("HTTP_AUTHORIZATION")
 
@@ -566,7 +676,7 @@ class TenantResolver:
 
             token = parts[1]
             if _is_jwt(token):
-                return self._resolve_jwt(token, wiki_slug)
+                return self._resolve_jwt(token, wiki)
 
             # Internal API key bypass (MCP sidecar → REST API on localhost)
             api_key = os.environ.get("OTTERWIKI_API_KEY", "")
@@ -589,73 +699,71 @@ class TenantResolver:
         if cookie_header:
             authed_user = self._auth.authenticate_from_cookie(cookie_header)
             if authed_user:
-                try:
-                    access = self._acl.check_access(authed_user.user_did, wiki_slug)
-                except AuthError as e:
-                    if e.status != 403:
-                        raise
-                    # No explicit ACL entry — fall back to public access if allowed
-                    access = self._acl.check_public_access(wiki_slug)
+                permissions, per_wiki_user = self._permissions_for_user(
+                    wiki, authed_user.handle, authed_user.user_did
+                )
                 proxy_headers = build_proxy_headers(
                     email=f"@{authed_user.handle}",
                     name=authed_user.display_name or authed_user.handle,
-                    permissions=access["permissions"],
+                    permissions=permissions,
                 )
                 return {
                     "proxy_headers": proxy_headers,
                     "is_authenticated": True,
                     "is_bearer_token": False,
+                    "per_wiki_user": per_wiki_user,
                 }
 
-        # Anonymous access
-        return self._resolve_anonymous(wiki_slug)
-
-    def _resolve_jwt(
-        self, token: str, wiki_slug: str
-    ) -> dict[str, Any]:
-        """Authenticate via platform JWT, then check ACL."""
-        authed_user = self._auth.authenticate(f"Bearer {token}")
-        access = self._acl.check_access(authed_user.user_did, wiki_slug)
-
-        proxy_headers = build_proxy_headers(
-            email=f"@{authed_user.handle}",
-            name=authed_user.display_name or authed_user.handle,
-            permissions=access["permissions"],
-        )
-        return {
-            "proxy_headers": proxy_headers,
-            "is_authenticated": True,
-            "is_bearer_token": False,
-        }
-
-    def _resolve_bearer_token(self, token: str) -> dict[str, Any]:
-        """Authenticate via MCP bearer token."""
-        access = self._acl.check_bearer_token(token)
-
-        proxy_headers = build_proxy_headers(
-            email="mcp@robot.wtf",
-            name="MCP Client",
-            permissions=access["permissions"],
-        )
-        return {
-            "proxy_headers": proxy_headers,
-            "is_authenticated": True,
-            "is_bearer_token": True,
-        }
-
-    def _resolve_anonymous(self, wiki_slug: str) -> dict[str, Any]:
-        """Check if anonymous (public) access is allowed."""
-        access = self._acl.check_public_access(wiki_slug)
-
+        # Anonymous access — grant READ; access restrictions may strip it
         proxy_headers = build_proxy_headers(
             email="@anonymous",
             name="Anonymous",
-            permissions=access["permissions"],
+            permissions=(READ,),
         )
         return {
             "proxy_headers": proxy_headers,
             "is_authenticated": False,
             "is_bearer_token": False,
+            "per_wiki_user": None,
+        }
+
+    def _resolve_jwt(
+        self, token: str, wiki: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Authenticate via platform JWT, then derive permissions."""
+        authed_user = self._auth.authenticate(f"Bearer {token}")
+        permissions, per_wiki_user = self._permissions_for_user(
+            wiki, authed_user.handle, authed_user.user_did
+        )
+
+        proxy_headers = build_proxy_headers(
+            email=f"@{authed_user.handle}",
+            name=authed_user.display_name or authed_user.handle,
+            permissions=permissions,
+        )
+        return {
+            "proxy_headers": proxy_headers,
+            "is_authenticated": True,
+            "is_bearer_token": False,
+            "per_wiki_user": per_wiki_user,
+        }
+
+    def _resolve_bearer_token(self, token: str) -> dict[str, Any]:
+        """Authenticate via MCP bearer token. Uses WikiModel.get_by_token()."""
+        from app.auth.permissions import permissions_for_role
+        wiki = self._wikis.get_by_token(token)
+        if not wiki:
+            raise AuthError("Invalid bearer token", status=401)
+
+        proxy_headers = build_proxy_headers(
+            email="mcp@robot.wtf",
+            name="MCP Client",
+            permissions=permissions_for_role("editor"),
+        )
+        return {
+            "proxy_headers": proxy_headers,
+            "is_authenticated": True,
+            "is_bearer_token": True,
         }
 
     def _swap_storage(self, repo_path: str) -> None:

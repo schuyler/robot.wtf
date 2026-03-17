@@ -39,7 +39,6 @@ class TestNonTenantPassthrough:
 
     def _make_resolver(self, stub_app=None):
         from app.resolver import TenantResolver
-        from app.auth.acl import AclEnforcer
         from app.auth.middleware import AuthMiddleware
 
         if stub_app is None:
@@ -48,14 +47,12 @@ class TestNonTenantPassthrough:
                 return [b"ok"]
 
         auth_middleware = MagicMock(spec=AuthMiddleware)
-        acl_enforcer = MagicMock(spec=AclEnforcer)
         wiki_model = MagicMock()
         user_model = MagicMock()
 
         return TenantResolver(
             stub_app,
             auth_middleware=auth_middleware,
-            acl_enforcer=acl_enforcer,
             wiki_model=wiki_model,
             user_model=user_model,
         )
@@ -171,7 +168,6 @@ class TestBrowserRedirect:
 
     def _make_resolver(self, *, public=False):
         from app.resolver import TenantResolver
-        from app.auth.acl import AclEnforcer
         from app.auth.middleware import AuthMiddleware
 
         def stub_app(environ, start_response):
@@ -181,15 +177,10 @@ class TestBrowserRedirect:
         auth_middleware = MagicMock(spec=AuthMiddleware)
         auth_middleware.authenticate_from_cookie.return_value = None
 
-        acl_enforcer = MagicMock(spec=AclEnforcer)
-        # check_public_access now only raises AuthError(404) for missing wikis;
-        # it always grants READ for existing wikis. Access control for private
-        # wikis is enforced via READ_ACCESS preference after the DB swap.
-        acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
-
         wiki_model = MagicMock()
         wiki_model.get.return_value = {
             "name": "Test Wiki",
+            "owner_did": "did:plc:owner",
             "disk_usage_bytes": 0,
             "is_public": int(public),
         }
@@ -199,7 +190,6 @@ class TestBrowserRedirect:
         return TenantResolver(
             stub_app,
             auth_middleware=auth_middleware,
-            acl_enforcer=acl_enforcer,
             wiki_model=wiki_model,
             user_model=user_model,
         )
@@ -340,11 +330,42 @@ class TestWikiAccessRestrictions:
         assert "WRITE" not in result
         assert "UPLOAD" not in result
 
-    def test_approved_keeps_perms_for_authenticated(self):
-        """APPROVED access level: authenticated users keep their permissions."""
-        result = self._call(["READ", "WRITE", "UPLOAD"], is_authenticated=True,
-                            config_overrides={"READ_ACCESS": "APPROVED"})
+    def test_approved_keeps_perms_for_approved_authenticated(self):
+        """APPROVED access level: authenticated + is_approved=True keeps permissions."""
+        from app.resolver import _apply_wiki_access_restrictions
+
+        config = {
+            "READ_ACCESS": "APPROVED",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        per_wiki_user = {"is_approved": True, "is_admin": False}
+        with patch("app.resolver._get_wiki_access_config", return_value=config):
+            result = _apply_wiki_access_restrictions(
+                ["READ", "WRITE", "UPLOAD"],
+                is_authenticated=True,
+                config=config,
+                per_wiki_user=per_wiki_user,
+            )
         assert "READ" in result
+
+    def test_approved_denies_unapproved_authenticated(self):
+        """APPROVED access level: authenticated but not approved → denied."""
+        from app.resolver import _apply_wiki_access_restrictions
+
+        config = {
+            "READ_ACCESS": "APPROVED",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        with patch("app.resolver._get_wiki_access_config", return_value=config):
+            result = _apply_wiki_access_restrictions(
+                ["READ", "WRITE", "UPLOAD"],
+                is_authenticated=True,
+                config=config,
+                per_wiki_user=None,  # not in per-wiki table
+            )
+        assert "READ" not in result
 
 
 class TestBearerTokenBypassesRestrictions:
@@ -352,7 +373,6 @@ class TestBearerTokenBypassesRestrictions:
 
     def _make_resolver(self):
         from app.resolver import TenantResolver
-        from app.auth.acl import AclEnforcer
         from app.auth.middleware import AuthMiddleware
 
         def stub_app(environ, start_response):
@@ -360,19 +380,22 @@ class TestBearerTokenBypassesRestrictions:
             return [b"ok"]
 
         auth_middleware = MagicMock(spec=AuthMiddleware)
-        acl_enforcer = MagicMock(spec=AclEnforcer)
-        acl_enforcer.check_bearer_token.return_value = {
-            "permissions": ["READ", "WRITE", "UPLOAD"],
-        }
 
         wiki_model = MagicMock()
-        wiki_model.get.return_value = {"name": "Test Wiki", "disk_usage_bytes": 0}
+        wiki_model.get.return_value = {
+            "name": "Test Wiki",
+            "owner_did": "did:plc:owner",
+            "disk_usage_bytes": 0,
+        }
+        wiki_model.get_by_token.return_value = {
+            "slug": "gruen",
+            "owner_did": "did:plc:owner",
+        }
         user_model = MagicMock()
 
         return TenantResolver(
             stub_app,
             auth_middleware=auth_middleware,
-            acl_enforcer=acl_enforcer,
             wiki_model=wiki_model,
             user_model=user_model,
         )
@@ -421,7 +444,6 @@ class TestLoginRedirectReturnTo:
 
     def _make_resolver(self):
         from app.resolver import TenantResolver
-        from app.auth.acl import AclEnforcer
         from app.auth.middleware import AuthMiddleware
 
         def stub_app(environ, start_response):
@@ -431,12 +453,10 @@ class TestLoginRedirectReturnTo:
         auth_middleware = MagicMock(spec=AuthMiddleware)
         auth_middleware.authenticate_from_cookie.return_value = None
 
-        acl_enforcer = MagicMock(spec=AclEnforcer)
-        acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
-
         wiki_model = MagicMock()
         wiki_model.get.return_value = {
             "name": "Test Wiki",
+            "owner_did": "did:plc:owner",
             "disk_usage_bytes": 0,
             "is_public": 0,
         }
@@ -446,7 +466,6 @@ class TestLoginRedirectReturnTo:
         return TenantResolver(
             stub_app,
             auth_middleware=auth_middleware,
-            acl_enforcer=acl_enforcer,
             wiki_model=wiki_model,
             user_model=user_model,
         )
@@ -504,7 +523,6 @@ class TestLazyInitSiteName:
 
     def _make_resolver(self, display_name=None):
         from app.resolver import TenantResolver
-        from app.auth.acl import AclEnforcer
         from app.auth.middleware import AuthMiddleware
 
         def stub_app(environ, start_response):
@@ -514,12 +532,10 @@ class TestLazyInitSiteName:
         auth_middleware = MagicMock(spec=AuthMiddleware)
         auth_middleware.authenticate_from_cookie.return_value = None
 
-        acl_enforcer = MagicMock(spec=AclEnforcer)
-        acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
-
         wiki_model = MagicMock()
         wiki_record = {
             "name": "test-wiki",
+            "owner_did": "did:plc:owner",
             "disk_usage_bytes": 0,
             "is_public": 1,
         }
@@ -532,7 +548,6 @@ class TestLazyInitSiteName:
         return TenantResolver(
             stub_app,
             auth_middleware=auth_middleware,
-            acl_enforcer=acl_enforcer,
             wiki_model=wiki_model,
             user_model=user_model,
         )
@@ -730,7 +745,6 @@ class TestPrivateWikiMigration:
         import os
         from unittest.mock import patch, MagicMock
         from app.resolver import TenantResolver, _initialized_dbs
-        from app.auth.acl import AclEnforcer
         from app.auth.middleware import AuthMiddleware
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -751,12 +765,10 @@ class TestPrivateWikiMigration:
             auth_middleware = MagicMock(spec=AuthMiddleware)
             auth_middleware.authenticate_from_cookie.return_value = None
 
-            acl_enforcer = MagicMock(spec=AclEnforcer)
-            acl_enforcer.check_public_access.return_value = {"permissions": ["READ"]}
-
             wiki_model = MagicMock()
             wiki_model.get.return_value = {
                 "name": "Untangling Collective",
+                "owner_did": "did:plc:owner",
                 "disk_usage_bytes": 0,
                 "is_public": 0,  # Private wiki
                 "repo_path": repo_path,
@@ -765,7 +777,6 @@ class TestPrivateWikiMigration:
             resolver = TenantResolver(
                 stub_app,
                 auth_middleware=auth_middleware,
-                acl_enforcer=acl_enforcer,
                 wiki_model=wiki_model,
                 user_model=MagicMock(),
             )
@@ -799,3 +810,472 @@ class TestPrivateWikiMigration:
             assert status == "403 Forbidden", (
                 f"Private wiki with is_public=0 should deny anonymous access; got {status}"
             )
+
+
+# ===========================================================================
+# Phase 2 User Management Tests
+# ===========================================================================
+
+
+def _make_resolver_no_acl(stub_app=None):
+    """Build a TenantResolver without AclEnforcer (Phase 2 new resolver)."""
+    from app.resolver import TenantResolver
+    from app.auth.middleware import AuthMiddleware
+
+    if stub_app is None:
+        def stub_app(environ, start_response):
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [b"ok"]
+
+    auth_middleware = MagicMock(spec=AuthMiddleware)
+    wiki_model = MagicMock()
+    user_model = MagicMock()
+
+    return TenantResolver(
+        stub_app,
+        auth_middleware=auth_middleware,
+        wiki_model=wiki_model,
+        user_model=user_model,
+    )
+
+
+class TestOwnerPermissions:
+    """owner_did match on the wiki → ADMIN permissions."""
+
+    def _make_resolver(self, owner_did="did:plc:owner"):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did=owner_did,
+            handle="owner.bsky.social",
+            display_name="Owner",
+            record={},
+        )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "owner-wiki",
+            "owner_did": owner_did,
+            "display_name": "Owner Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        resolver = TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+        return resolver, injected
+
+    def test_owner_gets_admin_permissions(self):
+        """Wiki owner (owner_did match) receives ADMIN permission."""
+        resolver, injected = self._make_resolver()
+        environ = _make_environ("owner-wiki.robot.wtf")
+        environ["HTTP_COOKIE"] = "platform_token=sometoken"
+        start_response, calls = _capture_response()
+
+        public_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=public_config):
+            resolver(environ, start_response)
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "200 OK"
+        perms = injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+        assert "ADMIN" in perms, f"Owner should have ADMIN; got: {perms!r}"
+
+
+class TestPerWikiUserPermissions:
+    """Per-wiki user table determines permissions for non-owners."""
+
+    def _make_resolver(self, per_wiki_user=None):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did="did:plc:visitor",
+            handle="visitor.bsky.social",
+            display_name="Visitor",
+            record={},
+        )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "test-wiki",
+            "owner_did": "did:plc:owner",  # different from visitor
+            "display_name": "Test Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        resolver = TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+        resolver._per_wiki_user_override = per_wiki_user
+        return resolver, injected
+
+    def _run(self, resolver, injected, config=None):
+        environ = _make_environ("test-wiki.robot.wtf")
+        environ["HTTP_COOKIE"] = "platform_token=sometoken"
+        start_response, calls = _capture_response()
+        if config is None:
+            config = {
+                "READ_ACCESS": "ANONYMOUS",
+                "WRITE_ACCESS": "ANONYMOUS",
+                "ATTACHMENT_ACCESS": "ANONYMOUS",
+            }
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=config), \
+             patch.object(resolver, "_get_per_wiki_user",
+                          return_value=resolver._per_wiki_user_override):
+            resolver(environ, start_response)
+        return calls, injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+
+    def test_per_wiki_user_admin_gets_admin(self):
+        """User in wiki.db with is_admin=True gets ADMIN."""
+        resolver, injected = self._make_resolver(per_wiki_user={
+            "is_admin": True,
+            "is_approved": True,
+            "allow_read": True,
+            "allow_write": True,
+            "allow_upload": True,
+        })
+        calls, perms = self._run(resolver, injected)
+        assert "ADMIN" in perms, f"Admin user should have ADMIN; got {perms!r}"
+
+    def test_per_wiki_user_editor_gets_write(self):
+        """User with allow_write=True gets WRITE permission."""
+        resolver, injected = self._make_resolver(per_wiki_user={
+            "is_admin": False,
+            "is_approved": True,
+            "allow_read": True,
+            "allow_write": True,
+            "allow_upload": False,
+        })
+        calls, perms = self._run(resolver, injected)
+        assert "WRITE" in perms, f"Editor should have WRITE; got {perms!r}"
+
+    def test_per_wiki_user_viewer_gets_read_only(self):
+        """User with allow_read=True, allow_write=False gets READ but not WRITE."""
+        resolver, injected = self._make_resolver(per_wiki_user={
+            "is_admin": False,
+            "is_approved": True,
+            "allow_read": True,
+            "allow_write": False,
+            "allow_upload": False,
+        })
+        calls, perms = self._run(resolver, injected)
+        assert "READ" in perms, f"Viewer should have READ; got {perms!r}"
+        assert "WRITE" not in perms, f"Viewer should not have WRITE; got {perms!r}"
+
+
+class TestApprovedWikiAccess:
+    """APPROVED access level gating via per-wiki user table."""
+
+    def _make_resolver(self, per_wiki_user=None):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did="did:plc:visitor",
+            handle="visitor.bsky.social",
+            display_name="Visitor",
+            record={},
+        )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "approved-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "Approved Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        resolver = TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+        resolver._per_wiki_user_override = per_wiki_user
+        return resolver, injected
+
+    def _run(self, resolver, injected, read_access="APPROVED"):
+        environ = _make_environ("approved-wiki.robot.wtf")
+        environ["HTTP_COOKIE"] = "platform_token=sometoken"
+        start_response, calls = _capture_response()
+        config = {
+            "READ_ACCESS": read_access,
+            "WRITE_ACCESS": "APPROVED",
+            "ATTACHMENT_ACCESS": "APPROVED",
+        }
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=config), \
+             patch.object(resolver, "_get_per_wiki_user",
+                          return_value=resolver._per_wiki_user_override):
+            resolver(environ, start_response)
+        return calls, injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+
+    def test_approved_wiki_denies_unapproved_user(self):
+        """READ_ACCESS=APPROVED, user not in table → READ denied."""
+        resolver, injected = self._make_resolver(per_wiki_user=None)
+        calls, perms = self._run(resolver, injected, read_access="APPROVED")
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        # Should get 403 or have no READ permission
+        if status == "200 OK":
+            assert "READ" not in perms, (
+                f"Unapproved user should not have READ on APPROVED wiki; got {perms!r}"
+            )
+        else:
+            assert status in ("403 Forbidden", "302 Found"), (
+                f"Expected denial, got: {status}"
+            )
+
+    def test_approved_wiki_allows_approved_user(self):
+        """READ_ACCESS=APPROVED, user in table with is_approved=True → allowed."""
+        resolver, injected = self._make_resolver(per_wiki_user={
+            "is_admin": False,
+            "is_approved": True,
+            "allow_read": True,
+            "allow_write": False,
+            "allow_upload": False,
+        })
+        calls, perms = self._run(resolver, injected, read_access="APPROVED")
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "200 OK", f"Approved user should be allowed; got {status}"
+        assert "READ" in perms, f"Approved user should have READ; got {perms!r}"
+
+
+class TestAnonymousAndRegisteredAccess:
+    """Wiki-level preferences for anonymous and registered access."""
+
+    def _make_resolver(self, cookie_user=None):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware
+
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = cookie_user
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "open-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "Open Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        return TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        ), injected
+
+    def _run(self, resolver, injected, config, environ=None, with_cookie=False):
+        if environ is None:
+            environ = _make_environ("open-wiki.robot.wtf")
+            if with_cookie:
+                environ["HTTP_COOKIE"] = "platform_token=sometoken"
+        start_response, calls = _capture_response()
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=config):
+            resolver(environ, start_response)
+        return calls, injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
+
+    def test_anonymous_public_wiki(self):
+        """READ_ACCESS=ANONYMOUS → unauthenticated user allowed to read."""
+        resolver, injected = self._make_resolver(cookie_user=None)
+        config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        calls, perms = self._run(resolver, injected, config)
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "200 OK", f"Anonymous should be allowed on public wiki; got {status}"
+        assert "READ" in perms, f"Anonymous should have READ; got {perms!r}"
+
+    def test_registered_wiki_allows_authenticated(self):
+        """READ_ACCESS=REGISTERED, authenticated user (not owner) → allowed."""
+        from app.auth.middleware import AuthenticatedUser
+        cookie_user = AuthenticatedUser(
+            user_did="did:plc:visitor",
+            handle="visitor.bsky.social",
+            display_name="Visitor",
+            record={},
+        )
+        resolver, injected = self._make_resolver(cookie_user=cookie_user)
+        config = {
+            "READ_ACCESS": "REGISTERED",
+            "WRITE_ACCESS": "REGISTERED",
+            "ATTACHMENT_ACCESS": "REGISTERED",
+        }
+        calls, perms = self._run(resolver, injected, config, with_cookie=True)
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "200 OK", f"Registered user should be allowed; got {status}"
+        assert "READ" in perms, f"Registered user should have READ; got {perms!r}"
+
+
+class TestBearerTokenResolvesWiki:
+    """Bearer token path: WikiModel.get_by_token() used directly."""
+
+    def test_bearer_token_resolves_wiki(self):
+        """Bearer token calls wiki_model.get_by_token and returns correct wiki."""
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware
+
+        injected = {}
+
+        def capture_app(environ, start_response):
+            injected.update(environ)
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        wiki_model = MagicMock()
+        # The wiki_slug lookup returns a real wiki for the bearer token path
+        wiki_model.get.return_value = {
+            "slug": "bearer-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "Bearer Wiki",
+            "disk_usage_bytes": 0,
+            "is_public": 1,
+        }
+        wiki_model.get_by_token.return_value = {
+            "slug": "bearer-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "Bearer Wiki",
+        }
+        user_model = MagicMock()
+
+        resolver = TenantResolver(
+            capture_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+        environ = _make_environ("bearer-wiki.robot.wtf")
+        environ["HTTP_AUTHORIZATION"] = "Bearer opaque-mcp-token"
+        start_response, calls = _capture_response()
+
+        public_config = {
+            "READ_ACCESS": "ANONYMOUS",
+            "WRITE_ACCESS": "ANONYMOUS",
+            "ATTACHMENT_ACCESS": "ANONYMOUS",
+        }
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=public_config):
+            resolver(environ, start_response)
+
+        # get_by_token should have been called, not scan_by_token
+        wiki_model.get_by_token.assert_called_once()
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "200 OK", f"Bearer token should succeed; got {status}"
+
+
+class TestInitWikiDbSeeding:
+    """Unit 3: _init_wiki_db seeds the wiki owner into the per-wiki user table."""
+
+    def test_init_wiki_db_seeds_owner(self, tmp_path):
+        """After _init_wiki_db with owner_handle, user table has owner with is_admin=True."""
+        import sqlite3
+        from app.resolver import _init_wiki_db, _initialized_dbs
+
+        db_path = str(tmp_path / "wiki.db")
+        _initialized_dbs.discard(db_path)
+        _init_wiki_db(db_path, owner_handle="ownerhandle")
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT * FROM user WHERE email = ?", ("@ownerhandle",)
+        ).fetchone()
+        conn.close()
+
+        assert row is not None, "Owner was not seeded into per-wiki user table"
+        row_dict = dict(zip(
+            ["id", "name", "email", "password_hash", "first_seen", "last_seen",
+             "is_approved", "is_admin", "email_confirmed", "allow_read", "allow_write", "allow_upload"],
+            row
+        ))
+        assert row_dict["is_admin"] == 1, f"Owner should have is_admin=1; got {row_dict['is_admin']}"
+        assert row_dict["is_approved"] == 1, "Owner should have is_approved=1"
+
+    def test_init_wiki_db_idempotent(self, tmp_path):
+        """Calling _init_wiki_db twice doesn't duplicate the owner row."""
+        import sqlite3
+        from app.resolver import _init_wiki_db, _initialized_dbs
+
+        db_path = str(tmp_path / "wiki2.db")
+        _initialized_dbs.discard(db_path)
+        _init_wiki_db(db_path, owner_handle="ownerhandle")
+
+        # Must remove from cache to call again
+        _initialized_dbs.discard(db_path)
+        _init_wiki_db(db_path, owner_handle="ownerhandle")
+
+        conn = sqlite3.connect(db_path)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM user WHERE email = ?", ("@ownerhandle",)
+        ).fetchone()[0]
+        conn.close()
+
+        assert count == 1, f"Owner should appear exactly once; found {count}"

@@ -7,19 +7,6 @@
   <a href="https://{{ wiki.slug }}.{{ platform_domain }}" class="ms-3 text-muted small">{{ wiki.slug }}.{{ platform_domain }}</a>
 </div>
 
-<!-- Navigation tabs -->
-<ul class="nav nav-tabs mb-4">
-  <li class="nav-item">
-    <a class="nav-link active" href="/app/wiki/{{ wiki.slug }}">Settings</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" href="/app/wiki/{{ wiki.slug }}/collaborators">Collaborators</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" href="/app/wiki/{{ wiki.slug }}/mcp">MCP</a>
-  </li>
-</ul>
-
 <!-- Display name -->
 <div class="card mb-4">
   <div class="card-body">
@@ -37,7 +24,7 @@
 <div class="card mb-4">
   <div class="card-body">
     <h5 class="card-title">Wiki admin panel</h5>
-    <p class="text-muted">Manage wiki content, search, and settings directly in Otterwiki.</p>
+    <p class="text-muted">Manage wiki content, users, and settings directly in Otterwiki.</p>
     <a href="https://{{ wiki.slug }}.{{ platform_domain }}/-/admin" class="btn btn-outline-secondary" target="_blank">
       Open admin panel
     </a>
@@ -48,7 +35,7 @@
 <div class="card border-danger">
   <div class="card-body">
     <h5 class="card-title text-danger">Danger zone</h5>
-    <p>Deleting a wiki removes all pages, history, and collaborator access. This cannot be undone.</p>
+    <p>Deleting a wiki removes all pages, history, and user access. This cannot be undone.</p>
     <button type="button" class="btn btn-outline-danger" data-bs-toggle="collapse" data-bs-target="#delete-confirm">
       Delete this wiki
     </button>
