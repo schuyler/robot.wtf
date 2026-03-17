@@ -36,6 +36,7 @@ from app.management.routes import (
     _init_wiki_repo,
     validate_slug,
 )
+from app.resolver import _init_wiki_db, _initialized_dbs
 from app.management.token import generate_mcp_token
 from app.models.acl import AclModel
 from app.models.user import UserModel
@@ -269,6 +270,11 @@ def _create_flask_app() -> Flask:
             flash("Failed to initialize wiki repository.", "danger")
             return redirect(url_for("wiki_create"))
 
+        # Initialize per-wiki database
+        wiki_dir = os.path.join(wiki_base, slug)
+        db_path = os.path.join(wiki_dir, "wiki.db")
+        _init_wiki_db(db_path, site_name=display_name)
+
         # Increment wiki count
         user_model.update(user.user_did, wiki_count=wiki_count + 1)
 
@@ -367,6 +373,9 @@ def _create_flask_app() -> Flask:
         if repo_path:
             wiki_dir = os.path.dirname(repo_path)
             _delete_wiki_repo(wiki_dir)
+            # Clear DB initialization cache
+            db_path = os.path.join(wiki_dir, "wiki.db")
+            _initialized_dbs.discard(db_path)
 
         # Delete ACLs
         for acl_entry in acl_model.list_by_wiki(slug):
@@ -621,6 +630,9 @@ def _create_flask_app() -> Flask:
             if repo_path:
                 wiki_dir = os.path.dirname(repo_path)
                 _delete_wiki_repo(wiki_dir)
+                # Clear DB initialization cache
+                db_path = os.path.join(wiki_dir, "wiki.db")
+                _initialized_dbs.discard(db_path)
             for acl_entry in acl_model.list_by_wiki(wiki_slug):
                 acl_model.delete(wiki_slug, acl_entry["grantee_did"])
             wiki_model.delete(wiki_slug)

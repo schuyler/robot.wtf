@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Cache storage instances by repo path
 _storage_cache: dict[str, Any] = {}
 
+# Set of wiki DB paths known to be initialized
+_initialized_dbs: set = set()
+
 # Domain suffix for extracting wiki slug from Host header
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
 
@@ -36,6 +39,115 @@ QUOTA_BYTES = 50 * 1024 * 1024  # 50MB
 
 # Base path for wiki data
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
+
+
+def _init_wiki_db(db_path: str, site_name: str = None) -> None:
+    """Create otterwiki tables in a per-wiki SQLite database.
+
+    Uses raw SQL to avoid importing otterwiki models.
+    Tables: preferences, drafts, user, cache.
+    """
+    if db_path in _initialized_dbs:
+        return
+
+    import sqlite3
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS preferences (
+                name VARCHAR(256) PRIMARY KEY,
+                value TEXT
+            );
+            CREATE TABLE IF NOT EXISTS drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pagepath VARCHAR(2048),
+                revision VARCHAR(64),
+                author_email VARCHAR(256),
+                content TEXT,
+                cursor_line INTEGER,
+                cursor_ch INTEGER,
+                datetime DATETIME
+            );
+            CREATE INDEX IF NOT EXISTS ix_drafts_pagepath ON drafts (pagepath);
+            CREATE TABLE IF NOT EXISTS "user" (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(128),
+                email VARCHAR(128) UNIQUE,
+                password_hash VARCHAR(512),
+                first_seen DATETIME,
+                last_seen DATETIME,
+                is_approved BOOLEAN DEFAULT 0,
+                is_admin BOOLEAN DEFAULT 0,
+                email_confirmed BOOLEAN DEFAULT 0,
+                allow_read BOOLEAN DEFAULT 0,
+                allow_write BOOLEAN DEFAULT 0,
+                allow_upload BOOLEAN DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS ix_user_email ON "user" (email);
+            CREATE TABLE IF NOT EXISTS cache (
+                key VARCHAR(64) PRIMARY KEY,
+                value TEXT,
+                datetime DATETIME
+            );
+            CREATE INDEX IF NOT EXISTS ix_cache_key ON cache (key);
+        """)
+        if site_name:
+            conn.execute(
+                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
+                ("SITE_NAME", site_name),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _initialized_dbs.add(db_path)
+
+
+def _swap_database(wiki_slug: str, wiki_dir: str) -> None:
+    """Swap otterwiki's SQLAlchemy engine to the per-wiki SQLite DB."""
+    db_path = os.path.join(wiki_dir, "wiki.db")
+
+    try:
+        import otterwiki.server
+        from sqlalchemy import create_engine
+    except (ImportError, SystemExit):
+        return
+
+    app = otterwiki.server.app
+    db = otterwiki.server.db
+
+    uri = f"sqlite:///{db_path}"
+
+    # Fast path: check actual engine URL, not config (FSA ignores config post-init)
+    engines = db._app_engines.get(app, {})
+    current_engine = engines.get(None)
+    if current_engine is not None and str(current_engine.url) == uri:
+        return
+
+    # Ensure DB exists with schema
+    _init_wiki_db(db_path)
+
+    # Update config (for reference only — FSA ignores this post-init)
+    app.config["SQLALCHEMY_DATABASE_URI"] = uri
+
+    # Remove current scoped session
+    db.session.remove()
+
+    # Dispose old engine and create new one
+    if current_engine is not None:
+        current_engine.dispose()
+
+    new_engine = create_engine(
+        uri,
+        connect_args={"check_same_thread": False},
+    )
+    engines[None] = new_engine
+
+    # Reload preferences from the new DB (needs app context)
+    with app.app_context():
+        otterwiki.server.update_app_config()
 
 
 def _is_jwt(token: str) -> bool:
@@ -260,6 +372,8 @@ class TenantResolver:
 
         # Swap otterwiki globals
         self._swap_storage(repo_path)
+        wiki_dir = os.path.dirname(repo_path)
+        _swap_database(wiki_slug, wiki_dir)
 
         # Inject proxy headers
         proxy_headers = auth_result["proxy_headers"]
