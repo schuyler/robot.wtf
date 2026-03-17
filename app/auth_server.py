@@ -65,11 +65,9 @@ from app.auth.consent import (
     sign_token as sign_consent_token,
     verify_token as verify_consent_token,
 )
-from app.auth.acl import AclEnforcer
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthError
 from app.db import get_connection, init_schema
-from app.models.acl import AclModel
 from app.models.user import UserModel, validate_username
 from app.models.wiki import WikiModel
 
@@ -646,16 +644,9 @@ def create_app(
         # Any authenticated user may consent to grant OAuth tokens for an
         # existing wiki (access restrictions are enforced by the resolver).
         db = _get_db()
-        enforcer = AclEnforcer(
-            acl_model=AclModel(db),
-            wiki_model=WikiModel(db),
-        )
-        try:
-            enforcer.check_public_access(wiki_slug)
-        except AuthError as e:
-            if e.status == 404:
-                abort(403, "Wiki not found")
-            raise
+        wiki = WikiModel(db).get(wiki_slug)
+        if not wiki:
+            abort(403, "Wiki not found")
 
         # Look up client name from the MCP OAuth DB (best-effort)
         client_name = oauth_params.get("client_id", "Unknown client")

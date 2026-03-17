@@ -694,10 +694,13 @@ class TestConsentWikiMembership:
         assert b"Authorize Access" in resp.data
 
     def test_consent_get_allows_authorized_wiki(self, client, platform_token, db_path):
-        """GET consent with a wiki the user has an ACL entry for returns 200."""
-        self._insert_user(db_path)
+        """GET consent for any existing wiki returns 200 for authenticated users.
+
+        Platform ACL has been removed; READ_ACCESS in wiki.db is the sole
+        gating mechanism for content access. Any authenticated user may obtain
+        an OAuth token for any existing wiki.
+        """
         self._insert_wiki(db_path, "my-wiki", owner_did="did:plc:owner")
-        self._insert_acl(db_path, "my-wiki", "did:plc:test123", role="viewer")
         client.set_cookie("platform_token", platform_token)
         resp = client.get(self._consent_url(wiki_slug="my-wiki"))
         assert resp.status_code == 200

@@ -26,7 +26,6 @@ from flask import (
     url_for,
 )
 
-from app.auth.acl import AclEnforcer
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthMiddleware
 from app.db import get_connection
@@ -38,7 +37,6 @@ from app.management.routes import (
 )
 from app.resolver import _init_wiki_db, _initialized_dbs
 from app.management.token import generate_mcp_token
-from app.models.acl import AclModel
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
@@ -70,17 +68,9 @@ def _require_login(app):
     return user
 
 
-def _is_owner(wiki, acl, user_did):
-    """Return True if user_did is the wiki owner.
-
-    Checks wiki.owner_did first (canonical), then falls back to an
-    explicit ACL row with role='owner' for backwards compatibility.
-    """
-    if wiki and wiki.get("owner_did") == user_did:
-        return True
-    if acl and acl.get("role") == "owner":
-        return True
-    return False
+def _is_owner(wiki, user_did):
+    """Return True if user_did is the wiki owner."""
+    return wiki is not None and wiki.get("owner_did") == user_did
 
 
 def _create_flask_app() -> Flask:
@@ -172,11 +162,15 @@ def _create_flask_app() -> Flask:
         wiki_model = app.config["WIKI_MODEL"]
         wikis = wiki_model.list_by_owner(user.user_did)
 
+        # Pop token from session so it's shown only once
+        mcp_token = session.pop("mcp_token", None)
+
         return render_template(
             "dashboard.html",
             user=user,
             wikis=wikis,
             platform_domain=PLATFORM_DOMAIN,
+            mcp_token=mcp_token,
         )
 
     @app.route("/app/create", methods=["GET", "POST"])
@@ -189,7 +183,6 @@ def _create_flask_app() -> Flask:
 
         user_model = app.config["USER_MODEL"]
         wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
 
         if request.method == "GET":
             default_slug = user.record.get("username", "")
@@ -245,14 +238,6 @@ def _create_flask_app() -> Flask:
             flash("A wiki with that slug already exists.", "danger")
             return redirect(url_for("wiki_create"))
 
-        # Create owner ACL
-        acl_model.create(
-            wiki_slug=slug,
-            grantee_did=user.user_did,
-            role="owner",
-            granted_by=user.user_did,
-        )
-
         # Init git repo
         try:
             _init_wiki_repo(
@@ -264,27 +249,27 @@ def _create_flask_app() -> Flask:
             logger.error("Failed to init wiki repo: %s", e)
             try:
                 wiki_model.delete(slug)
-                acl_model.delete(slug, user.user_did)
             except Exception:
                 pass
             flash("Failed to initialize wiki repository.", "danger")
             return redirect(url_for("wiki_create"))
 
-        # Initialize per-wiki database
+        # Initialize per-wiki database, seeding the owner
         wiki_dir = os.path.join(wiki_base, slug)
         db_path = os.path.join(wiki_dir, "wiki.db")
+        owner_handle = user.handle.split(".")[0] if user.handle else None
         try:
-            _init_wiki_db(db_path, site_name=display_name)
+            _init_wiki_db(db_path, site_name=display_name, owner_handle=owner_handle)
         except Exception:
             logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 
         # Increment wiki count
         user_model.update(user.user_did, wiki_count=wiki_count + 1)
 
-        # Store token in session for the MCP page to display
+        # Store token in session for the dashboard to display
         flash("Wiki created! Your MCP bearer token is below.", "success")
         session["mcp_token"] = plaintext_token
-        return redirect(url_for("mcp_instructions", slug=slug))
+        return redirect(url_for("dashboard"))
 
     @app.route("/app/wiki/<slug>")
     def wiki_settings(slug):
@@ -295,14 +280,12 @@ def _create_flask_app() -> Flask:
         user = result
 
         wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
         wiki = wiki_model.get(slug)
         if not wiki:
             flash("Wiki not found.", "danger")
             return redirect(url_for("dashboard"))
 
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
+        if not _is_owner(wiki, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -315,21 +298,19 @@ def _create_flask_app() -> Flask:
 
     @app.route("/app/wiki/<slug>/settings", methods=["POST"])
     def wiki_settings_update(slug):
-        """Update wiki settings (display name, visibility)."""
+        """Update wiki settings (display name)."""
         result = _require_login(app)
         if not hasattr(result, "user_did"):
             return result
         user = result
 
         wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
         wiki = wiki_model.get(slug)
         if not wiki:
             flash("Wiki not found.", "danger")
             return redirect(url_for("dashboard"))
 
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
+        if not _is_owner(wiki, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -341,7 +322,7 @@ def _create_flask_app() -> Flask:
 
         wiki_model.update(slug, **updates)
         flash("Settings updated.", "success")
-        return redirect(url_for("wiki_settings", slug=slug))
+        return redirect(url_for("dashboard"))
 
     @app.route("/app/wiki/<slug>/delete", methods=["POST"])
     def wiki_delete(slug):
@@ -353,21 +334,19 @@ def _create_flask_app() -> Flask:
 
         user_model = app.config["USER_MODEL"]
         wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
         wiki = wiki_model.get(slug)
         if not wiki:
             flash("Wiki not found.", "danger")
             return redirect(url_for("dashboard"))
 
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
+        if not _is_owner(wiki, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
         confirm = request.form.get("confirm_slug", "").strip()
         if confirm != slug:
             flash("Slug confirmation did not match.", "danger")
-            return redirect(url_for("wiki_settings", slug=slug))
+            return redirect(url_for("dashboard"))
 
         # Delete repo
         repo_path = wiki.get("repo_path", "")
@@ -377,10 +356,6 @@ def _create_flask_app() -> Flask:
             # Clear DB initialization cache
             db_path = os.path.join(wiki_dir, "wiki.db")
             _initialized_dbs.discard(db_path)
-
-        # Delete ACLs
-        for acl_entry in acl_model.list_by_wiki(slug):
-            acl_model.delete(slug, acl_entry["grantee_did"])
 
         # Delete wiki record
         wiki_model.delete(slug)
@@ -392,168 +367,6 @@ def _create_flask_app() -> Flask:
         flash(f"Wiki '{slug}' has been deleted.", "success")
         return redirect(url_for("dashboard"))
 
-    @app.route("/app/wiki/<slug>/collaborators")
-    def collaborators(slug):
-        """Collaborator management page."""
-        result = _require_login(app)
-        if not hasattr(result, "user_did"):
-            return result
-        user = result
-
-        user_model = app.config["USER_MODEL"]
-        wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
-        wiki = wiki_model.get(slug)
-        if not wiki:
-            flash("Wiki not found.", "danger")
-            return redirect(url_for("dashboard"))
-
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
-            flash("Access denied.", "danger")
-            return redirect(url_for("dashboard"))
-
-        acls = acl_model.list_by_wiki(slug)
-        # Enrich ACLs with user handles
-        for acl_entry in acls:
-            grantee = user_model.get(acl_entry["grantee_did"])
-            if grantee:
-                acl_entry["user_handle"] = grantee.get("handle", "")
-
-        return render_template(
-            "collaborators.html",
-            user=user,
-            wiki=wiki,
-            acls=acls,
-            platform_domain=PLATFORM_DOMAIN,
-        )
-
-    @app.route("/app/wiki/<slug>/collaborators/add", methods=["POST"])
-    def collaborator_add(slug):
-        """Add a collaborator."""
-        result = _require_login(app)
-        if not hasattr(result, "user_did"):
-            return result
-        user = result
-
-        user_model = app.config["USER_MODEL"]
-        wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
-        wiki = wiki_model.get(slug)
-        if not wiki:
-            flash("Wiki not found.", "danger")
-            return redirect(url_for("dashboard"))
-
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
-            flash("Access denied.", "danger")
-            return redirect(url_for("dashboard"))
-
-        grantee_handle = request.form.get("grantee_handle", "").strip()
-        role = request.form.get("role", "").strip()
-
-        if role not in ("editor", "viewer"):
-            flash("Invalid role.", "danger")
-            return redirect(url_for("collaborators", slug=slug))
-
-        if not grantee_handle:
-            flash("Bluesky handle or DID is required.", "danger")
-            return redirect(url_for("collaborators", slug=slug))
-
-        # Look up user by DID or handle
-        if grantee_handle.startswith("did:"):
-            grantee = user_model.get(grantee_handle)
-        else:
-            # Try by username first, then by handle field
-            grantee = user_model.get_by_username(grantee_handle)
-            if not grantee:
-                conn = user_model._conn
-                row = conn.execute(
-                    "SELECT * FROM users WHERE handle = ?",
-                    (grantee_handle,),
-                ).fetchone()
-                grantee = dict(row) if row else None
-
-        if not grantee:
-            flash(
-                f"User '{grantee_handle}' not found. They must sign up first.",
-                "danger",
-            )
-            return redirect(url_for("collaborators", slug=slug))
-
-        acl_model.create(
-            wiki_slug=slug,
-            grantee_did=grantee["did"],
-            role=role,
-            granted_by=user.user_did,
-        )
-
-        flash(
-            f"Added {grantee.get('handle', grantee['did'])} as {role}.",
-            "success",
-        )
-        return redirect(url_for("collaborators", slug=slug))
-
-    @app.route("/app/wiki/<slug>/collaborators/revoke", methods=["POST"])
-    def collaborator_revoke(slug):
-        """Revoke a collaborator's access."""
-        result = _require_login(app)
-        if not hasattr(result, "user_did"):
-            return result
-        user = result
-
-        wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
-        wiki = wiki_model.get(slug)
-        if not wiki:
-            flash("Wiki not found.", "danger")
-            return redirect(url_for("dashboard"))
-
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
-            flash("Access denied.", "danger")
-            return redirect(url_for("dashboard"))
-
-        grantee_did = request.form.get("grantee_did", "").strip()
-        if grantee_did == user.user_did:
-            flash("Cannot revoke owner access.", "danger")
-            return redirect(url_for("collaborators", slug=slug))
-
-        acl_model.delete(slug, grantee_did)
-        flash("Collaborator access revoked.", "success")
-        return redirect(url_for("collaborators", slug=slug))
-
-    @app.route("/app/wiki/<slug>/mcp")
-    def mcp_instructions(slug):
-        """MCP setup instructions page."""
-        result = _require_login(app)
-        if not hasattr(result, "user_did"):
-            return result
-        user = result
-
-        wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
-        wiki = wiki_model.get(slug)
-        if not wiki:
-            flash("Wiki not found.", "danger")
-            return redirect(url_for("dashboard"))
-
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
-            flash("Access denied.", "danger")
-            return redirect(url_for("dashboard"))
-
-        # Check for one-time token display
-        mcp_token = session.pop("mcp_token", None)
-
-        return render_template(
-            "mcp_instructions.html",
-            user=user,
-            wiki=wiki,
-            mcp_token=mcp_token,
-            platform_domain=PLATFORM_DOMAIN,
-        )
-
     @app.route("/app/wiki/<slug>/mcp/regenerate", methods=["POST"])
     def mcp_regenerate(slug):
         """Regenerate MCP bearer token."""
@@ -563,14 +376,12 @@ def _create_flask_app() -> Flask:
         user = result
 
         wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
         wiki = wiki_model.get(slug)
         if not wiki:
             flash("Wiki not found.", "danger")
             return redirect(url_for("dashboard"))
 
-        acl = acl_model.get(slug, user.user_did)
-        if not _is_owner(wiki, acl, user.user_did):
+        if not _is_owner(wiki, user.user_did):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -582,7 +393,7 @@ def _create_flask_app() -> Flask:
             "Token regenerated. Copy it now -- it will not be shown again.",
             "warning",
         )
-        return redirect(url_for("mcp_instructions", slug=slug))
+        return redirect(url_for("dashboard"))
 
     @app.route("/app/account")
     def account():
@@ -611,7 +422,6 @@ def _create_flask_app() -> Flask:
 
         user_model = app.config["USER_MODEL"]
         wiki_model = app.config["WIKI_MODEL"]
-        acl_model = app.config["ACL_MODEL"]
         record = user_model.get(user.user_did)
         if not record:
             flash("User not found.", "danger")
@@ -634,8 +444,6 @@ def _create_flask_app() -> Flask:
                 # Clear DB initialization cache
                 db_path = os.path.join(wiki_dir, "wiki.db")
                 _initialized_dbs.discard(db_path)
-            for acl_entry in acl_model.list_by_wiki(wiki_slug):
-                acl_model.delete(wiki_slug, acl_entry["grantee_did"])
             wiki_model.delete(wiki_slug)
 
         # Delete user record
@@ -660,7 +468,6 @@ def _build_app():
     conn = get_connection()
     user_model = UserModel(conn)
     wiki_model = WikiModel(conn)
-    acl_model = AclModel(conn)
 
     private_key, public_key = _load_keys()
     platform_jwt = PlatformJWT(private_key, public_key)
@@ -673,7 +480,6 @@ def _build_app():
     flask_app.config["AUTH_MIDDLEWARE"] = auth_middleware
     flask_app.config["USER_MODEL"] = user_model
     flask_app.config["WIKI_MODEL"] = wiki_model
-    flask_app.config["ACL_MODEL"] = acl_model
     flask_app.config["WIKI_BASE"] = WIKI_BASE
 
     # Wrap Flask app with ManagementMiddleware
@@ -682,7 +488,6 @@ def _build_app():
         auth_middleware=auth_middleware,
         user_model=user_model,
         wiki_model=wiki_model,
-        acl_model=acl_model,
     )
 
     return wsgi_app

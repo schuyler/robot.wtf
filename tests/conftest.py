@@ -7,7 +7,6 @@ import sqlite3
 import pytest
 
 from app.db import init_schema
-from app.models.acl import AclModel
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
@@ -31,11 +30,6 @@ def user_model(db):
 @pytest.fixture
 def wiki_model(db):
     return WikiModel(db)
-
-
-@pytest.fixture
-def acl_model(db):
-    return AclModel(db)
 
 
 @pytest.fixture
