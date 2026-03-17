@@ -318,6 +318,53 @@ class TestWikiCreate:
         html = resp.data.decode()
         assert "Display name is required" in html
 
+    def test_create_form_default_slug_from_handle_when_no_username(
+        self, client, platform_jwt, user_model
+    ):
+        """User with no username gets handle-derived slug default."""
+        # Create a user with empty username (bypassing model validation)
+        user_model.create(
+            did="did:plc:nouser",
+            handle="nouser.bsky.social",
+            display_name="No User",
+            username="nouser",
+        )
+        # Clear the username so default_username_from_handle kicks in
+        user_model.update("did:plc:nouser", username="")
+        token = platform_jwt.create_token(
+            user_did="did:plc:nouser",
+            handle="nouser.bsky.social",
+            display_name="No User",
+        )
+        client.set_cookie("platform_token", token, domain="localhost")
+        resp = client.get("/app/create")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'value="nouser"' in html
+
+    def test_create_form_empty_default_slug_when_handle_is_reserved(
+        self, client, platform_jwt, user_model
+    ):
+        """User with no username and a handle that produces a reserved slug gets empty default."""
+        user_model.create(
+            did="did:plc:adminuser",
+            handle="admin.bsky.social",
+            display_name="Admin User",
+            username="adminbsky",
+        )
+        user_model.update("did:plc:adminuser", username="")
+        token = platform_jwt.create_token(
+            user_did="did:plc:adminuser",
+            handle="admin.bsky.social",
+            display_name="Admin User",
+        )
+        client.set_cookie("platform_token", token, domain="localhost")
+        resp = client.get("/app/create")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # slug field should have empty value
+        assert 'value=""' in html
+
 
 # --- Wiki settings tests ---
 

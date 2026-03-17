@@ -437,7 +437,9 @@ def _parse_host(host: str) -> str | None:
     if not subdomain:
         return None
 
-    # Reserved subdomains that are not wiki tenants
+    # Reserved subdomains that are not wiki tenants.
+    # NOTE: This is a fast-path subset; the canonical reserved set lives in
+    # app.models.user.RESERVED_NAMES. Keep these two in sync if names change.
     reserved = {"www", "api", "mcp", "auth"}
     if subdomain in reserved:
         return None

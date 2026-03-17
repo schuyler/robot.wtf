@@ -699,22 +699,22 @@ class TestReturnToValidation:
 
 class TestDefaultUsername:
     def test_simple_handle(self):
-        from app.auth_server import _default_username_from_handle
-        assert _default_username_from_handle("alice.bsky.social") == "alice"
+        from app.models.user import default_username_from_handle
+        assert default_username_from_handle("alice.bsky.social") == "alice"
 
     def test_handle_with_uppercase(self):
-        from app.auth_server import _default_username_from_handle
-        assert _default_username_from_handle("Alice.bsky.social") == "alice"
+        from app.models.user import default_username_from_handle
+        assert default_username_from_handle("Alice.bsky.social") == "alice"
 
     def test_short_prefix(self):
-        from app.auth_server import _default_username_from_handle
+        from app.models.user import default_username_from_handle
         # "ab" is too short, should get padded
-        result = _default_username_from_handle("ab.bsky.social")
+        result = default_username_from_handle("ab.bsky.social")
         assert len(result) >= 3
 
     def test_handle_with_special_chars(self):
-        from app.auth_server import _default_username_from_handle
-        result = _default_username_from_handle("test_user.bsky.social")
+        from app.models.user import default_username_from_handle
+        result = default_username_from_handle("test_user.bsky.social")
         # underscore stripped, result is "testuser"
         assert "_" not in result
         assert result == "testuser"

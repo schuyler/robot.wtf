@@ -20,7 +20,7 @@ from typing import Any, Callable
 from app.auth.middleware import AuthError, AuthMiddleware, AuthenticatedUser
 from app.management.token import generate_mcp_token
 from app.resolver import _init_wiki_db, _initialized_dbs
-from app.models.user import RESERVED_USERNAMES, UserModel, validate_username
+from app.models.user import RESERVED_NAMES, UserModel, validate_username
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
@@ -33,14 +33,6 @@ MAX_PAGES_PER_WIKI = 500
 # Slug validation: lowercase alphanumeric + hyphens, 3-30 chars,
 # no leading/trailing hyphens
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$")
-
-# Slugs that conflict with infrastructure subdomains
-RESERVED_SLUGS = frozenset({
-    "admin", "api", "app", "assets", "auth", "billing", "blog",
-    "dev", "docs", "help", "mcp", "null", "static", "status",
-    "support", "undefined", "wiki", "www",
-})
-
 
 def validate_slug(slug: str) -> tuple[bool, str | None]:
     """Validate a wiki slug for format and reserved names.
@@ -60,7 +52,7 @@ def validate_slug(slug: str) -> tuple[bool, str | None]:
         if slug.startswith("-") or slug.endswith("-"):
             return False, "slug must not start or end with a hyphen"
         return False, "slug must contain only lowercase letters, digits, and hyphens"
-    if slug in RESERVED_SLUGS:
+    if slug in RESERVED_NAMES:
         return False, "slug is reserved"
     return True, None
 
