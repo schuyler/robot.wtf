@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-import bcrypt
+import hashlib
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -86,11 +86,10 @@ class WikiModel:
         self._conn.execute("DELETE FROM wikis WHERE slug = ?", (slug,))
         self._conn.commit()
 
-    def scan_by_token(self, plaintext_token: str) -> dict[str, Any] | None:
-        """Find a wiki by checking a plaintext token against stored bcrypt hashes.
+    def get_by_token(self, plaintext_token: str) -> dict[str, Any] | None:
+        """Find a wiki by its MCP bearer token.
 
-        Scans all wikis with a non-empty mcp_token_hash and checks each
-        with bcrypt.checkpw(). Necessary because bcrypt salts are random.
+        Computes SHA-256 of the plaintext token and looks up by indexed hash.
 
         Args:
             plaintext_token: The plaintext bearer token to validate.
@@ -98,20 +97,10 @@ class WikiModel:
         Returns:
             The matching wiki dict, or None if no match.
         """
-        token_bytes = plaintext_token.encode("utf-8")
-        rows = self._conn.execute(
-            "SELECT * FROM wikis WHERE mcp_token_hash IS NOT NULL AND mcp_token_hash != ''"
-        ).fetchall()
-
-        for row in rows:
-            wiki = dict(row)
-            stored_hash = wiki.get("mcp_token_hash", "")
-            if not stored_hash:
-                continue
-            try:
-                if bcrypt.checkpw(token_bytes, stored_hash.encode("utf-8")):
-                    return wiki
-            except (ValueError, TypeError):
-                continue
-
-        return None
+        if not plaintext_token:
+            return None
+        token_hash = hashlib.sha256(plaintext_token.encode("utf-8")).hexdigest()
+        row = self._conn.execute(
+            "SELECT * FROM wikis WHERE mcp_token_hash = ?", (token_hash,)
+        ).fetchone()
+        return dict(row) if row else None

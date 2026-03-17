@@ -226,7 +226,7 @@ class TestDashboard:
             owner_did="did:plc:owner",
             display_name="My Wiki",
             repo_path="/tmp/fake/repo",
-            mcp_token_hash="$2b$12$fakehash",
+            mcp_token_hash="a" * 64,
         )
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.get("/app/")

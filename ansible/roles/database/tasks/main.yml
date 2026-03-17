@@ -16,6 +16,17 @@
     sqlite3 /srv/data/robot.db < /tmp/robot_schema.sql
   changed_when: false
 
+- name: Invalidate legacy bcrypt token hashes
+  ansible.builtin.command:
+    cmd: sqlite3 /srv/data/robot.db "UPDATE wikis SET mcp_token_hash = 'invalidated:' || slug WHERE mcp_token_hash LIKE '$2b$%';"
+  register: bcrypt_migration
+  changed_when: false
+
+- name: Add unique index on mcp_token_hash
+  ansible.builtin.command:
+    cmd: sqlite3 /srv/data/robot.db "CREATE UNIQUE INDEX IF NOT EXISTS ix_wikis_mcp_token_hash ON wikis (mcp_token_hash);"
+  changed_when: false
+
 - name: Set database file ownership
   ansible.builtin.shell: chown robot:robot /srv/data/robot.db*
   args:

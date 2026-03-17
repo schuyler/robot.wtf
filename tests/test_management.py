@@ -506,7 +506,7 @@ class TestTierLimits:
             owner_did="did:plc:owner",
             display_name="Page Wiki",
             repo_path="/srv/data/wikis/page-wiki/repo",
-            mcp_token_hash="$2b$12$fakehash",
+            mcp_token_hash="b" * 64,
         )
         # Under limit
         ok, err = ManagementMiddleware.check_page_limit(wiki)

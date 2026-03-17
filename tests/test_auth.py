@@ -169,7 +169,7 @@ class TestAclEnforcer:
             owner_did="did:plc:pub",
             display_name="Public Wiki",
             repo_path="/srv/data/wikis/public-wiki/repo",
-            mcp_token_hash="$2b$12$hash",
+            mcp_token_hash="a" * 64,
             is_public=True,
         )
         enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
@@ -195,7 +195,7 @@ class TestAclEnforcer:
             owner_did="did:plc:priv",
             display_name="Private Flag Wiki",
             repo_path="/srv/data/wikis/private-flag-wiki/repo",
-            mcp_token_hash="$2b$12$hash",
+            mcp_token_hash="a" * 64,
             is_public=False,  # is_public=0 should no longer block anonymous access
         )
         enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
@@ -210,7 +210,7 @@ class TestAclEnforcer:
         assert exc_info.value.status == 404
 
     def test_check_bearer_token(self, db, user_model, wiki_model, acl_model):
-        import bcrypt
+        import hashlib
 
         user_model.create(
             did="did:plc:tokuser",
@@ -219,9 +219,7 @@ class TestAclEnforcer:
             username="tokuser",
         )
         plaintext = "my-secret-token"
-        hashed = bcrypt.hashpw(
-            plaintext.encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
+        hashed = hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
         wiki_model.create(
             slug="tok-wiki",
             owner_did="did:plc:tokuser",
