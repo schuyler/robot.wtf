@@ -76,6 +76,11 @@ def _build_app():
             user_model=user_model,
         )
 
+    # Trust one X-Forwarded-For hop (set by Caddy) at the outermost WSGI layer
+    # so all middleware sees the corrected REMOTE_ADDR
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    wsgi_app = ProxyFix(wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     return wsgi_app
 
 

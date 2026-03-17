@@ -11,6 +11,40 @@ from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiters():
+    """Reset module-level rate limiter singletons between tests.
+
+    The WSGIRateLimiter singletons in management.routes and resolver use
+    MemoryStorage which is process-local and persists across test runs.
+    This fixture replaces the storage with a fresh instance before each
+    test so rate-limit state doesn't bleed between tests.
+    """
+    from app.rate_limit import WSGIRateLimiter
+    import app.management.routes as management_routes
+    import app.resolver as resolver_module
+
+    # Replace management limiter
+    fresh_mgmt = WSGIRateLimiter()
+    fresh_mgmt.add_limit("api_write", "5/minute")
+    fresh_mgmt.add_limit("api_read", "15/minute")
+    old_mgmt = management_routes._management_limiter
+    management_routes._management_limiter = fresh_mgmt
+
+    # Replace resolver limiter
+    fresh_resolver = WSGIRateLimiter()
+    fresh_resolver.add_limit("wiki_write", "5/minute")
+    old_resolver = resolver_module._resolver_limiter
+    resolver_module._resolver_limiter = fresh_resolver
+
+    yield
+
+    # Restore originals (not strictly needed since we replaced at start,
+    # but keeps the module state cleaner after the suite)
+    management_routes._management_limiter = old_mgmt
+    resolver_module._resolver_limiter = old_resolver
+
+
 @pytest.fixture
 def db():
     """In-memory SQLite database with schema initialized."""

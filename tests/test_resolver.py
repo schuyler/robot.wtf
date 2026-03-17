@@ -1574,3 +1574,186 @@ class TestConstantsImport:
         from app.constants import MAX_PAGES_PER_WIKI, QUOTA_BYTES
         assert MAX_PAGES_PER_WIKI == 500
         assert QUOTA_BYTES == 50 * 1024 * 1024
+
+
+class TestResolverRateLimiting:
+    """TenantResolver enforces write rate limiting (429 after exceeding limit).
+
+    Rate-limit check fires AFTER quota check, so 413 takes priority over 429.
+    Read requests are NOT rate-limited.
+    """
+
+    _public_config = {
+        "READ_ACCESS": "ANONYMOUS",
+        "WRITE_ACCESS": "ANONYMOUS",
+        "ATTACHMENT_ACCESS": "ANONYMOUS",
+    }
+
+    def _make_resolver(self, stub_app=None):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware, AuthenticatedUser
+
+        if stub_app is None:
+            def stub_app(environ, start_response):
+                start_response("200 OK", [])
+                return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did="did:plc:owner",
+            handle="owner.bsky.social",
+            display_name="Owner",
+            record={},
+        )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "rl-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "RL Wiki",
+            "disk_usage_bytes": 0,
+            "page_count": 0,
+            "is_public": 1,
+        }
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def _run(self, resolver, environ):
+        with patch.object(resolver, "_swap_storage"), \
+             patch("app.resolver._swap_database"), \
+             patch("app.resolver._get_wiki_access_config", return_value=self._public_config):
+            start_response, calls = _capture_response()
+            resolver(environ, start_response)
+        return calls
+
+    def test_write_requests_are_rate_limited(self):
+        """Exceeding write limit on /api/ path returns 429."""
+        import app.resolver as resolver_module
+
+        # Reset the module-level limiter to a tight limit for testing
+        from app.rate_limit import WSGIRateLimiter
+        test_limiter = WSGIRateLimiter()
+        test_limiter.add_limit("wiki_write", "1/minute")
+
+        resolver = self._make_resolver()
+
+        environ = _make_environ("rl-wiki.robot.wtf", path="/api/v1/pages/TestPage")
+        environ["REQUEST_METHOD"] = "PUT"
+        environ["REMOTE_ADDR"] = "10.1.2.3"
+        environ["HTTP_COOKIE"] = "platform_token=ownertoken"
+
+        responses = []
+        original_limiter = resolver_module._resolver_limiter
+        try:
+            resolver_module._resolver_limiter = test_limiter
+            for _ in range(3):
+                calls = self._run(resolver, environ)
+                if calls:
+                    responses.append(calls[0][0])
+        finally:
+            resolver_module._resolver_limiter = original_limiter
+
+        assert "429 Too Many Requests" in responses, (
+            f"Expected 429 after exceeding write limit; got: {responses}"
+        )
+
+    def test_read_requests_not_rate_limited(self):
+        """GET requests pass through without rate limiting."""
+        import app.resolver as resolver_module
+
+        from app.rate_limit import WSGIRateLimiter
+        test_limiter = WSGIRateLimiter()
+        test_limiter.add_limit("wiki_write", "1/minute")
+
+        resolver = self._make_resolver()
+
+        environ = _make_environ("rl-wiki.robot.wtf", path="/SomePage")
+        environ["REQUEST_METHOD"] = "GET"
+        environ["REMOTE_ADDR"] = "10.1.2.3"
+
+        responses = []
+        original_limiter = resolver_module._resolver_limiter
+        try:
+            resolver_module._resolver_limiter = test_limiter
+            for _ in range(5):
+                calls = self._run(resolver, environ)
+                if calls:
+                    responses.append(calls[0][0])
+        finally:
+            resolver_module._resolver_limiter = original_limiter
+
+        assert "429 Too Many Requests" not in responses, (
+            f"Read requests should not be rate limited; got: {responses}"
+        )
+        assert all(s == "200 OK" for s in responses), (
+            f"All reads should pass; got: {responses}"
+        )
+
+    def test_quota_check_takes_priority_over_rate_limit(self):
+        """Quota-exceeded request gets 413 (not 429) even when rate limit exceeded."""
+        from app.constants import MAX_PAGES_PER_WIKI
+        from app.auth.middleware import AuthenticatedUser
+        import app.resolver as resolver_module
+
+        from app.rate_limit import WSGIRateLimiter
+        test_limiter = WSGIRateLimiter()
+        # Set limit to 0 so the rate check would always fail IF reached
+        test_limiter.add_limit("wiki_write", "1/minute")
+
+        # Exhaust the rate limit counter in advance
+        test_limiter.check("wiki_write", "10.5.6.7")  # first allowed
+        test_limiter.check("wiki_write", "10.5.6.7")  # now blocked
+
+        auth_middleware = MagicMock()
+        auth_middleware.authenticate_from_cookie.return_value = AuthenticatedUser(
+            user_did="did:plc:owner",
+            handle="owner.bsky.social",
+            display_name="Owner",
+            record={},
+        )
+
+        wiki_model = MagicMock()
+        wiki_model.get.return_value = {
+            "slug": "quota-wiki",
+            "owner_did": "did:plc:owner",
+            "display_name": "Quota Wiki",
+            "disk_usage_bytes": 0,
+            "page_count": MAX_PAGES_PER_WIKI,  # at quota
+            "is_public": 1,
+        }
+
+        from app.resolver import TenantResolver
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [])
+            return [b"ok"]
+
+        resolver = TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=MagicMock(),
+        )
+
+        environ = _make_environ("quota-wiki.robot.wtf", path="/api/v1/pages/NewPage")
+        environ["REQUEST_METHOD"] = "PUT"
+        environ["REMOTE_ADDR"] = "10.5.6.7"
+
+        original_limiter = resolver_module._resolver_limiter
+        try:
+            resolver_module._resolver_limiter = test_limiter
+            calls = self._run(resolver, environ)
+        finally:
+            resolver_module._resolver_limiter = original_limiter
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "413 Request Entity Too Large", (
+            f"Quota check should take priority over rate limit; got {status}"
+        )

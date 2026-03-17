@@ -37,6 +37,7 @@ from flask import (
     make_response,
     redirect,
     render_template,
+    render_template_string,
     request,
     session,
     abort,
@@ -154,6 +155,10 @@ def create_app(
     """
     app = Flask(__name__, template_folder="auth/templates")
 
+    # Trust one X-Forwarded-For hop (set by Caddy) so Flask sees the real client IP
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     # Secret key for Flask session — must be set in production
     secret_key = os.environ.get("FLASK_SECRET_KEY", "")
     if not secret_key or secret_key.startswith("dev-secret"):
@@ -173,6 +178,17 @@ def create_app(
         os.environ["SIGNING_KEY_PATH"] = signing_key_path
     if db_path:
         os.environ["ROBOT_DB_PATH"] = db_path
+
+    # Rate limiting — set up before routes are defined
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["60/minute"],
+        storage_uri="memory://",
+    )
 
     # Load keys at startup
     client_secret_jwk, client_pub_jwk = _load_client_jwk()
@@ -232,6 +248,7 @@ def create_app(
         })
 
     @app.route("/auth/login", methods=("GET", "POST"))
+    @limiter.limit("1/minute", methods=["POST"])
     def oauth_login():
         """Login page (GET) or initiate OAuth flow (POST)."""
         # Preserve return_to across the login flow — accept relative URLs or *.PLATFORM_DOMAIN
@@ -506,6 +523,7 @@ def create_app(
         return resp
 
     @app.route("/auth/signup", methods=("GET", "POST"))
+    @limiter.limit("1/minute", methods=["POST"])
     def signup():
         """Signup form for first-time users."""
         pending_did = session.get("pending_did")
@@ -620,6 +638,7 @@ def create_app(
         return f"{base}?{query}"
 
     @app.route("/auth/oauth/consent", methods=("GET", "POST"))
+    @limiter.limit("2/minute", methods=["POST"])
     def oauth_consent():
         """MCP OAuth consent page.
 
@@ -826,6 +845,22 @@ def create_app(
     def jwks():
         """JSON Web Key Set — exposes the platform's RS256 public key."""
         return jsonify({"keys": [rs256_jwk]})
+
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        if request.accept_mimetypes.best == "application/json":
+            resp = jsonify(error="Rate limit exceeded")
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "60"
+            return resp
+        resp = make_response(
+            render_template_string(
+                "<h1>Too Many Requests</h1><p>Please slow down and try again later.</p>"
+            ),
+            429,
+        )
+        resp.headers["Retry-After"] = "60"
+        return resp
 
     @app.errorhandler(500)
     def internal_server_error(e):
