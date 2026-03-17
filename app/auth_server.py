@@ -640,9 +640,10 @@ def create_app(
         )
         try:
             enforcer.check_public_access(wiki_slug)
-        except AuthError:
-            # Only raises on 404 (wiki not found)
-            abort(403, "Wiki not found")
+        except AuthError as e:
+            if e.status == 404:
+                abort(403, "Wiki not found")
+            raise
 
         # Look up client name from the MCP OAuth DB (best-effort)
         client_name = oauth_params.get("client_id", "Unknown client")

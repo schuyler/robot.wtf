@@ -41,11 +41,18 @@ QUOTA_BYTES = 50 * 1024 * 1024  # 50MB
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
 
 
-def _init_wiki_db(db_path: str, site_name: str = None) -> None:
+def _init_wiki_db(db_path: str, site_name: str = None, is_public: bool = True) -> None:
     """Create otterwiki tables in a per-wiki SQLite database.
 
     Uses raw SQL to avoid importing otterwiki models.
     Tables: preferences, drafts, user, cache.
+
+    Args:
+        db_path: Path to the per-wiki SQLite file.
+        site_name: Optional SITE_NAME preference to seed.
+        is_public: Whether the wiki is publicly readable. If False and
+            READ_ACCESS is not already set, seeds READ_ACCESS=REGISTERED
+            to preserve the wiki's private status after is_public removal.
     """
     if db_path in _initialized_dbs:
         return
@@ -97,6 +104,14 @@ def _init_wiki_db(db_path: str, site_name: str = None) -> None:
                 "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
                 ("SITE_NAME", site_name),
             )
+        # Migration: seed READ_ACCESS=REGISTERED for private wikis that have
+        # no READ_ACCESS preference yet, preserving their access policy after
+        # the is_public flag was removed as the gating mechanism.
+        if not is_public:
+            conn.execute(
+                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
+                ("READ_ACCESS", "REGISTERED"),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -105,8 +120,14 @@ def _init_wiki_db(db_path: str, site_name: str = None) -> None:
     _initialized_dbs.add(db_path)
 
 
-def _swap_database(wiki_dir: str) -> None:
-    """Swap otterwiki's SQLAlchemy engine to the per-wiki SQLite DB."""
+def _swap_database(wiki_dir: str, is_public: bool = True) -> None:
+    """Swap otterwiki's SQLAlchemy engine to the per-wiki SQLite DB.
+
+    Args:
+        wiki_dir: Directory containing wiki.db.
+        is_public: Passed through to _init_wiki_db to seed READ_ACCESS
+            for wikis that were previously marked private via is_public=0.
+    """
     db_path = os.path.join(wiki_dir, "wiki.db")
 
     # Path validation: ensure db_path is under WIKI_BASE
@@ -132,8 +153,8 @@ def _swap_database(wiki_dir: str) -> None:
     if current_engine is not None and str(current_engine.url) == uri:
         return
 
-    # Ensure DB exists with schema
-    _init_wiki_db(db_path)
+    # Ensure DB exists with schema (seeds READ_ACCESS for private wikis)
+    _init_wiki_db(db_path, is_public=is_public)
 
     old_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
 
@@ -463,7 +484,8 @@ class TenantResolver:
         # Swap otterwiki globals (loads per-wiki preferences into app.config)
         self._swap_storage(repo_path)
         wiki_dir = os.path.dirname(repo_path)
-        _swap_database(wiki_dir)
+        wiki_is_public = bool(wiki.get("is_public", True))
+        _swap_database(wiki_dir, is_public=wiki_is_public)
 
         # Fetch wiki access config once (after storage swap so preferences are loaded)
         wiki_access_config = _get_wiki_access_config()
