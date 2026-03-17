@@ -9,7 +9,7 @@
     <p>Enter your Bluesky handle to continue</p>
     {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
     <fieldset role="group">
-      <input name="username" id="username" placeholder="alice.bsky.social" style="font-family: monospace;" required>
+      <input name="username" id="username" placeholder="alice.bsky.social" value="{{ prefill_handle or '' }}" style="font-family: monospace;" required>
       <input type="submit" value="Login">
     </fieldset>
   </form>

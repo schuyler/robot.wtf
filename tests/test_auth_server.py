@@ -100,6 +100,17 @@ def client(app):
     return app.test_client()
 
 
+@pytest.fixture
+def platform_jwt_instance(rsa_keys):
+    """Create a PlatformJWT for generating test tokens."""
+    _, private_pem = rsa_keys
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding, PublicFormat
+    priv = load_pem_private_key(private_pem.encode(), password=None)
+    pub_pem = priv.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode()
+    from app.auth.jwt import PlatformJWT
+    return PlatformJWT(private_pem, pub_pem)
+
+
 # --- Client Metadata ---
 
 
@@ -145,6 +156,92 @@ class TestLoginPage:
     def test_login_post_empty_handle(self, client):
         resp = client.post("/auth/login", data={"username": ""})
         assert resp.status_code == 400
+
+
+class TestJWTAutoRedirect:
+    """GET /auth/login with existing JWT cookie."""
+
+    def test_valid_jwt_redirects_to_app(self, client, platform_jwt_instance):
+        """Valid JWT cookie -> redirect to /app/."""
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:auto1", handle="auto.bsky.social", display_name="Auto"
+        )
+        client.set_cookie("platform_token", token)
+        resp = client.get("/auth/login")
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "https://robot.wtf/app/"
+
+    def test_valid_jwt_redirects_to_return_to(self, client, platform_jwt_instance):
+        """Valid JWT + safe return_to -> redirect there."""
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:auto2", handle="auto2.bsky.social", display_name="Auto2"
+        )
+        client.set_cookie("platform_token", token)
+        resp = client.get("/auth/login?return_to=/some/page")
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/some/page"
+
+    def test_valid_jwt_unsafe_return_to_falls_back(self, client, platform_jwt_instance):
+        """Valid JWT + unsafe return_to -> redirect to /app/."""
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:auto3", handle="auto3.bsky.social", display_name="Auto3"
+        )
+        client.set_cookie("platform_token", token)
+        resp = client.get("/auth/login?return_to=https://evil.com/steal")
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "https://robot.wtf/app/"
+
+    def test_valid_jwt_clears_stale_session_return_to(self, client, platform_jwt_instance):
+        """Valid JWT redirect clears stale session return_to."""
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:auto4", handle="auto4.bsky.social", display_name="Auto4"
+        )
+        client.set_cookie("platform_token", token)
+        with client.session_transaction() as sess:
+            sess["return_to"] = "/stale/session/path"
+        resp = client.get("/auth/login")
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "https://robot.wtf/app/"
+        with client.session_transaction() as sess:
+            assert "return_to" not in sess
+
+    def test_valid_jwt_does_not_write_session(self, client, platform_jwt_instance):
+        """Auto-redirect must not write return_to to session."""
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:auto5", handle="auto5.bsky.social", display_name="Auto5"
+        )
+        client.set_cookie("platform_token", token)
+        resp = client.get("/auth/login?return_to=/new/path")
+        assert resp.status_code == 302
+        with client.session_transaction() as sess:
+            assert "return_to" not in sess
+
+    def test_expired_jwt_prefills_handle(self, client, platform_jwt_instance):
+        """Expired JWT -> render login form with handle pre-filled."""
+        from datetime import timedelta
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:exp1",
+            handle="expired.bsky.social",
+            display_name="Expired",
+            lifetime=timedelta(seconds=-1),
+        )
+        client.set_cookie("platform_token", token)
+        resp = client.get("/auth/login")
+        assert resp.status_code == 200
+        assert b"expired.bsky.social" in resp.data
+
+    def test_garbage_cookie_renders_normal_form(self, client):
+        """Non-JWT garbage in cookie -> normal login form."""
+        client.set_cookie("platform_token", "not-a-jwt-at-all")
+        resp = client.get("/auth/login")
+        assert resp.status_code == 200
+        assert b"Bluesky" in resp.data
+
+    def test_no_cookie_renders_normal_form(self, client):
+        """No cookie -> normal login form (baseline)."""
+        resp = client.get("/auth/login")
+        assert resp.status_code == 200
+        assert b"Bluesky" in resp.data
 
 
 # --- OAuth Callback ---
