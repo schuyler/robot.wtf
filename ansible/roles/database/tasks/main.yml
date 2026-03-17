@@ -20,7 +20,7 @@
   ansible.builtin.command:
     cmd: sqlite3 /srv/data/robot.db "UPDATE wikis SET mcp_token_hash = 'invalidated:' || slug WHERE mcp_token_hash LIKE '$2b$%';"
   register: bcrypt_migration
-  changed_when: bcrypt_migration.stdout != ""
+  changed_when: false
 
 - name: Add unique index on mcp_token_hash
   ansible.builtin.command:

@@ -4,7 +4,7 @@ Validates incoming requests and resolves them to a User record.
 Two token flows:
 
 1. Platform JWT (browser/API): Validated against our RS256 public key.
-2. Bearer token (MCP): Opaque token checked against bcrypt hashes.
+2. Bearer token (MCP): Opaque token checked against SHA-256 hashes.
 
 No WorkOS -- ATProto OAuth is handled separately.
 """

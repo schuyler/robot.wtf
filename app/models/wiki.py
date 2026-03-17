@@ -97,6 +97,8 @@ class WikiModel:
         Returns:
             The matching wiki dict, or None if no match.
         """
+        if not plaintext_token:
+            return None
         token_hash = hashlib.sha256(plaintext_token.encode("utf-8")).hexdigest()
         row = self._conn.execute(
             "SELECT * FROM wikis WHERE mcp_token_hash = ?", (token_hash,)
