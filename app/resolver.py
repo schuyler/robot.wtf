@@ -138,25 +138,25 @@ def _swap_database(wiki_dir: str) -> None:
     old_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
 
     try:
-        # Remove current scoped session
-        db.session.remove()
-
-        # Create new engine FIRST, then dispose old
-        new_engine = create_engine(
-            uri,
-            connect_args={"check_same_thread": False},
-        )
-        engines[None] = new_engine
-
-        # Now safe to dispose the old engine
-        if current_engine is not None:
-            current_engine.dispose()
-
-        # Update config (for reference only — FSA ignores this post-init)
-        app.config["SQLALCHEMY_DATABASE_URI"] = uri
-
-        # Reload preferences from the new DB (needs app context)
         with app.app_context():
+            # Remove current scoped session (needs app context for session scoping)
+            db.session.remove()
+
+            # Create new engine FIRST, then dispose old
+            new_engine = create_engine(
+                uri,
+                connect_args={"check_same_thread": False},
+            )
+            engines[None] = new_engine
+
+            # Now safe to dispose the old engine
+            if current_engine is not None:
+                current_engine.dispose()
+
+            # Update config (for reference only — FSA ignores this post-init)
+            app.config["SQLALCHEMY_DATABASE_URI"] = uri
+
+            # Reload preferences from the new DB
             otterwiki.server.update_app_config()
     except Exception:
         # Restore previous engine if swap failed
