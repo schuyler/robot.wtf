@@ -45,6 +45,7 @@
   ansible.builtin.pip:
     name: "git+https://github.com/schuyler/otterwiki.git@wikibot-io"
     virtualenv: /srv/app/venv
+    state: forcereinstall
   notify: restart robot services
 
 - name: Install otterwiki-api plugin
