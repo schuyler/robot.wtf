@@ -264,8 +264,10 @@ def create_app(
                 try:
                     platform_jwt.validate_token(cookie_token)
                     # Valid JWT — redirect immediately
-                    # Clear any stale session return_to to prevent surprising redirects later
-                    session.pop("return_to", None)
+                    # Clear all auth-flow session keys to prevent stale state
+                    for key in ("return_to", "pending_did", "pending_handle",
+                                "csrf_nonces", "signup_state"):
+                        session.pop(key, None)
                     redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
                     return redirect(redirect_target)
                 except pyjwt.ExpiredSignatureError:
@@ -281,7 +283,9 @@ def create_app(
                             },
                             algorithms=["RS256"],
                         )
-                        prefill_handle = expired_claims.get("handle", "")
+                        raw_handle = expired_claims.get("handle", "")
+                        # Display-only, untrusted — cap length and strip non-printable chars
+                        prefill_handle = re.sub(r"[^\x20-\x7e]", "", raw_handle)[:253]
                     except Exception:
                         pass  # garbage token — fall through to normal form
                 except Exception:

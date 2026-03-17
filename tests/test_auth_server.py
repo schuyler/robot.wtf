@@ -230,6 +230,22 @@ class TestJWTAutoRedirect:
         assert resp.status_code == 200
         assert b"expired.bsky.social" in resp.data
 
+    def test_expired_jwt_caps_prefill_handle_length(self, client, platform_jwt_instance):
+        """Expired JWT with overlong handle is capped."""
+        from datetime import timedelta
+        token = platform_jwt_instance.create_token(
+            user_did="did:plc:long1",
+            handle="a" * 1000,
+            display_name="Long",
+            lifetime=timedelta(seconds=-1),
+        )
+        client.set_cookie("platform_token", token)
+        resp = client.get("/auth/login")
+        assert resp.status_code == 200
+        # Handle should be capped at 253 chars
+        assert b"a" * 1000 not in resp.data
+        assert b"a" * 253 in resp.data
+
     def test_garbage_cookie_renders_normal_form(self, client):
         """Non-JWT garbage in cookie -> normal login form."""
         client.set_cookie("platform_token", "not-a-jwt-at-all")
