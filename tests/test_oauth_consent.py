@@ -669,13 +669,29 @@ class TestConsentWikiMembership:
         conn.commit()
         conn.close()
 
-    def test_consent_get_rejects_unauthorized_wiki(self, client, platform_token, db_path):
-        """GET consent with a wiki the user has no ACL access to returns 403."""
-        # Insert the wiki but NOT an ACL entry for did:plc:test123
-        self._insert_wiki(db_path, "private-wiki", owner_did="did:plc:someone-else")
+    def test_consent_get_rejects_nonexistent_wiki(self, client, platform_token, db_path):
+        """GET consent for a wiki slug that does not exist returns 403.
+
+        is_public is no longer checked. Any existing wiki is accessible to
+        authenticated users; READ_ACCESS in wiki.db gates actual content access.
+        """
+        # Do NOT insert the wiki — slug is unknown
         client.set_cookie("platform_token", platform_token)
-        resp = client.get(self._consent_url(wiki_slug="private-wiki"))
+        resp = client.get(self._consent_url(wiki_slug="no-such-wiki"))
         assert resp.status_code == 403
+
+    def test_consent_get_allows_existing_wiki_without_acl(self, client, platform_token, db_path):
+        """GET consent succeeds for any existing wiki, even without an explicit ACL.
+
+        READ_ACCESS in wiki.db is the sole gating mechanism for anonymous access.
+        Authenticated users can consent to grant OAuth tokens for any existing wiki.
+        """
+        # Insert the wiki but NOT an ACL entry for did:plc:test123
+        self._insert_wiki(db_path, "any-wiki", owner_did="did:plc:someone-else")
+        client.set_cookie("platform_token", platform_token)
+        resp = client.get(self._consent_url(wiki_slug="any-wiki"))
+        assert resp.status_code == 200
+        assert b"Authorize Access" in resp.data
 
     def test_consent_get_allows_authorized_wiki(self, client, platform_token, db_path):
         """GET consent with a wiki the user has an ACL entry for returns 200."""
@@ -687,9 +703,12 @@ class TestConsentWikiMembership:
         assert resp.status_code == 200
         assert b"Authorize Access" in resp.data
 
-    def test_consent_get_allows_public_wiki(self, client, platform_token, db_path):
-        """GET consent with a public wiki (no ACL needed) returns 200."""
-        self._insert_wiki(db_path, "open-wiki", owner_did="did:plc:owner", is_public=True)
+    def test_consent_get_allows_existing_wiki(self, client, platform_token, db_path):
+        """GET consent for any existing wiki returns 200 regardless of is_public.
+
+        is_public is no longer the gating mechanism; READ_ACCESS in wiki.db controls access.
+        """
+        self._insert_wiki(db_path, "open-wiki", owner_did="did:plc:owner", is_public=False)
         client.set_cookie("platform_token", platform_token)
         resp = client.get(self._consent_url(wiki_slug="open-wiki"))
         assert resp.status_code == 200

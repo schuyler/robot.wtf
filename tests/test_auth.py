@@ -177,11 +177,31 @@ class TestAclEnforcer:
         assert result["role"] == "public"
         assert result["permissions"] == (READ,)
 
-    def test_check_public_access_denied(self, wiki_model, acl_model, sample_wiki):
+    def test_check_public_access_ignores_is_public_flag(
+        self, db, user_model, wiki_model, acl_model
+    ):
+        """check_public_access grants READ regardless of is_public value.
+
+        READ_ACCESS in wiki.db is now the sole gating mechanism.
+        """
+        user_model.create(
+            did="did:plc:priv",
+            handle="priv.bsky.social",
+            display_name="Priv",
+            username="priv",
+        )
+        wiki_model.create(
+            slug="private-flag-wiki",
+            owner_did="did:plc:priv",
+            display_name="Private Flag Wiki",
+            repo_path="/srv/data/wikis/private-flag-wiki/repo",
+            mcp_token_hash="$2b$12$hash",
+            is_public=False,  # is_public=0 should no longer block anonymous access
+        )
         enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
-        with pytest.raises(AuthError) as exc_info:
-            enforcer.check_public_access("test-wiki")
-        assert exc_info.value.status == 403
+        result = enforcer.check_public_access("private-flag-wiki")
+        assert result["role"] == "public"
+        assert result["permissions"] == (READ,)
 
     def test_check_public_access_not_found(self, wiki_model, acl_model):
         enforcer = AclEnforcer(acl_model=acl_model, wiki_model=wiki_model)
