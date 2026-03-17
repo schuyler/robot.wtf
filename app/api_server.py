@@ -10,12 +10,15 @@ A lightweight Flask app that:
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
+import pathlib
 
 from flask import (
     Flask,
     flash,
+    g,
     jsonify,
     make_response,
     redirect,
@@ -81,6 +84,12 @@ def _create_flask_app() -> Flask:
     )
     app = Flask(__name__, template_folder=template_dir, static_folder=None)
 
+    # Resolve otterwiki static dir at startup time
+    _spec = importlib.util.find_spec("otterwiki")
+    if _spec is None or _spec.origin is None:
+        raise RuntimeError("otterwiki package not found")
+    OTTERWIKI_STATIC = str(pathlib.Path(_spec.origin).parent / "static")
+
     # Secret key for Flask session — must be set in production
     secret_key = os.environ.get("FLASK_SECRET_KEY", "")
     if not secret_key or secret_key.startswith("dev-secret"):
@@ -117,6 +126,34 @@ def _create_flask_app() -> Flask:
         )
         resp.headers["Retry-After"] = "60"
         return resp
+
+    # --- Otterwiki static assets ---
+
+    @app.route("/app/static/<path:path>")
+    @limiter.exempt
+    def otterwiki_static(path: str):
+        """Serve otterwiki static assets for management UI."""
+        return send_from_directory(OTTERWIKI_STATIC, path)
+
+    # --- Auth via before_request + context processor ---
+
+    @app.before_request
+    def load_user():
+        """Authenticate user from cookie and store on g for /app/* routes."""
+        if request.path.startswith("/app/"):
+            g.user = _authenticate_cookie(app)
+        else:
+            g.user = None
+
+    @app.context_processor
+    def inject_sidebar_data():
+        """Inject sidebar_wikis and platform_domain into all templates."""
+        user = getattr(g, "user", None)
+        if user is None:
+            return {"sidebar_wikis": [], "platform_domain": PLATFORM_DOMAIN}
+        wiki_model = app.config["WIKI_MODEL"]
+        wikis = wiki_model.list_by_owner(user.user_did)
+        return {"sidebar_wikis": wikis, "platform_domain": PLATFORM_DOMAIN}
 
     # --- Static / Landing ---
 
@@ -182,7 +219,7 @@ def _create_flask_app() -> Flask:
 
     @app.route("/app/")
     def dashboard():
-        """Dashboard: list user's wikis or show create CTA."""
+        """Dashboard: redirect to first wiki, or show empty-state create CTA."""
         result = _require_login(app)
         if not hasattr(result, "user_did"):
             return result  # redirect
@@ -191,15 +228,12 @@ def _create_flask_app() -> Flask:
         wiki_model = app.config["WIKI_MODEL"]
         wikis = wiki_model.list_by_owner(user.user_did)
 
-        # Pop token from session so it's shown only once
-        mcp_token = session.pop("mcp_token", None)
+        if wikis:
+            return redirect(url_for("wiki_settings", slug=wikis[0]["slug"]))
 
         return render_template(
             "dashboard.html",
             user=user,
-            wikis=wikis,
-            platform_domain=PLATFORM_DOMAIN,
-            mcp_token=mcp_token,
         )
 
     @app.route("/app/create", methods=["GET", "POST"])
@@ -296,10 +330,10 @@ def _create_flask_app() -> Flask:
         # Increment wiki count
         user_model.update(user.user_did, wiki_count=wiki_count + 1)
 
-        # Store token in session for the dashboard to display
+        # Store token in session for wiki_settings to display
         flash("Wiki created! Your MCP bearer token is below.", "success")
         session["mcp_token"] = plaintext_token
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("wiki_settings", slug=slug))
 
     @app.route("/app/wiki/<slug>")
     def wiki_settings(slug):
@@ -319,11 +353,14 @@ def _create_flask_app() -> Flask:
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
+        mcp_token = session.pop("mcp_token", None)
+
         return render_template(
             "wiki_settings.html",
             user=user,
             wiki=wiki,
             platform_domain=PLATFORM_DOMAIN,
+            mcp_token=mcp_token,
         )
 
     @app.route("/app/wiki/<slug>/settings", methods=["POST"])
@@ -353,7 +390,7 @@ def _create_flask_app() -> Flask:
 
         wiki_model.update(slug, **updates)
         flash("Settings updated.", "success")
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("wiki_settings", slug=slug))
 
     @app.route("/app/wiki/<slug>/delete", methods=["POST"])
     @limiter.limit("2/minute")
@@ -426,7 +463,7 @@ def _create_flask_app() -> Flask:
             "Token regenerated. Copy it now -- it will not be shown again.",
             "warning",
         )
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("wiki_settings", slug=slug))
 
     @app.route("/app/account")
     def account():

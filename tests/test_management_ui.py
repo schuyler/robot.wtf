@@ -207,12 +207,12 @@ class TestDashboard:
         resp = client.get("/app/")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "Create your wiki" in html
+        assert "Create your first wiki" in html
 
-    def test_dashboard_with_wiki(
+    def test_dashboard_with_wiki_redirects(
         self, client, owner_token, owner_user, wiki_model
     ):
-        """Dashboard with a wiki shows wiki info."""
+        """Dashboard redirects to first wiki's settings page when wikis exist."""
         wiki_model.create(
             slug="my-wiki",
             owner_did="did:plc:owner",
@@ -221,7 +221,23 @@ class TestDashboard:
             mcp_token_hash="a" * 64,
         )
         client.set_cookie("platform_token", owner_token, domain="localhost")
-        resp = client.get("/app/")
+        resp = client.get("/app/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/app/wiki/my-wiki" in resp.headers["Location"]
+
+    def test_dashboard_with_wiki_follows_to_settings(
+        self, client, owner_token, owner_user, wiki_model
+    ):
+        """Dashboard redirect lands on wiki settings page with wiki info."""
+        wiki_model.create(
+            slug="my-wiki",
+            owner_did="did:plc:owner",
+            display_name="My Wiki",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="a" * 64,
+        )
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/", follow_redirects=True)
         assert resp.status_code == 200
         html = resp.data.decode()
         assert "My Wiki" in html
@@ -251,7 +267,7 @@ class TestWikiCreate:
     def test_create_wiki_success(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
-        """POST /app/create creates wiki and redirects to dashboard."""
+        """POST /app/create creates wiki and redirects to wiki settings."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.post(
             "/app/create",
@@ -263,7 +279,7 @@ class TestWikiCreate:
             follow_redirects=False,
         )
         assert resp.status_code == 302
-        assert "/app/" in resp.headers["Location"]
+        assert "/app/wiki/test-wiki" in resp.headers["Location"]
 
         # Wiki should exist
         wiki = wiki_model.get("test-wiki")
@@ -274,7 +290,7 @@ class TestWikiCreate:
     def test_create_wiki_shows_token(
         self, mock_init, client, owner_token, owner_user
     ):
-        """Dashboard after creation should show the bearer token."""
+        """Wiki settings page after creation should show the bearer token."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         # Create wiki
         resp = client.post(
@@ -284,7 +300,7 @@ class TestWikiCreate:
         )
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "bearer token" in html.lower() or "MCP" in html
+        assert "Your MCP bearer token" in html or "MCP" in html
 
     def test_create_wiki_invalid_slug(self, client, owner_token, owner_user):
         client.set_cookie("platform_token", owner_token, domain="localhost")
@@ -491,21 +507,21 @@ class TestWikiSettings:
         assert resp.status_code == 302  # redirects to dashboard
 
 
-# --- MCP tests (on dashboard) ---
+# --- MCP tests (on wiki_settings) ---
 
 
-class TestMCPOnDashboard:
+class TestMCPOnWikiSettings:
     @patch("app.api_server._init_wiki_repo")
-    def test_dashboard_shows_mcp_info(
+    def test_wiki_settings_shows_mcp_info(
         self, mock_init, client, owner_token, owner_user
     ):
-        """Dashboard shows MCP endpoint and claude mcp add command."""
+        """Wiki settings page shows MCP endpoint and claude mcp add command."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         client.post(
             "/app/create",
             data={"slug": "mcp-wiki", "display_name": "MCP Wiki"},
         )
-        resp = client.get("/app/")
+        resp = client.get("/app/wiki/mcp-wiki")
         assert resp.status_code == 200
         html = resp.data.decode()
         assert "MCP" in html
@@ -513,10 +529,34 @@ class TestMCPOnDashboard:
         assert "claude mcp add" in html
 
     @patch("app.api_server._init_wiki_repo")
+    def test_wiki_settings_shows_mcp_token_once(
+        self, mock_init, client, owner_token, owner_user
+    ):
+        """Wiki settings page shows bearer token alert after creation, then clears it."""
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        # Create wiki; token is stored in session
+        client.post(
+            "/app/create",
+            data={"slug": "tok-wiki", "display_name": "Tok Wiki"},
+            follow_redirects=False,
+        )
+        # First visit to wiki_settings should show the token alert
+        resp = client.get("/app/wiki/tok-wiki")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # The token alert section contains this specific text
+        assert "Your MCP bearer token" in html
+
+        # Second visit should NOT show the token alert (popped from session)
+        resp2 = client.get("/app/wiki/tok-wiki")
+        html2 = resp2.data.decode()
+        assert "Your MCP bearer token" not in html2
+
+    @patch("app.api_server._init_wiki_repo")
     def test_regenerate_token(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
-        """Regenerate MCP token changes the hash."""
+        """Regenerate MCP token changes the hash and redirects to wiki_settings."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         client.post(
             "/app/create",
@@ -529,6 +569,7 @@ class TestMCPOnDashboard:
             follow_redirects=False,
         )
         assert resp.status_code == 302
+        assert "/app/wiki/regen-wiki" in resp.headers["Location"]
         new_hash = wiki_model.get("regen-wiki")["mcp_token_hash"]
         assert new_hash != old_hash
 
@@ -596,6 +637,64 @@ class TestApiMe:
         assert resp.status_code == 401
         data = resp.get_json()
         assert "error" in data
+
+
+# --- Context processor / sidebar tests ---
+
+
+class TestContextProcessor:
+    def test_sidebar_empty_when_unauthenticated(self, client):
+        """Unauthenticated requests do not trigger wiki DB queries for sidebar."""
+        resp = client.get("/app/")
+        # Redirect to login -- sidebar_wikis should not cause an error
+        assert resp.status_code == 302
+
+    def test_sidebar_shows_user_wikis(self, client, owner_token, owner_user, wiki_model):
+        """Authenticated user sees their wikis in the sidebar."""
+        wiki_model.create(
+            slug="sidebar-wiki",
+            owner_did="did:plc:owner",
+            display_name="Sidebar Wiki",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="b" * 64,
+        )
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/wiki/sidebar-wiki")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "Sidebar Wiki" in html
+        # Sidebar link should appear
+        assert "/app/wiki/sidebar-wiki" in html
+
+    def test_sidebar_active_link(self, client, owner_token, owner_user, wiki_model):
+        """Current wiki's sidebar link has active class."""
+        wiki_model.create(
+            slug="active-wiki",
+            owner_did="did:plc:owner",
+            display_name="Active Wiki",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="c" * 64,
+        )
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/wiki/active-wiki")
+        html = resp.data.decode()
+        # The sidebar link for this wiki should have 'active'
+        assert "active" in html
+
+    def test_platform_domain_injected(self, client, owner_token, owner_user, wiki_model):
+        """platform_domain is injected by context processor and appears in templates."""
+        wiki_model.create(
+            slug="domain-wiki",
+            owner_did="did:plc:owner",
+            display_name="Domain Wiki",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="d" * 64,
+        )
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/wiki/domain-wiki")
+        html = resp.data.decode()
+        # The wiki URL should contain the platform domain
+        assert "domain-wiki.robot.wtf" in html
 
 
 # --- Rate limiting tests ---

@@ -2,53 +2,88 @@
 {% block title %}{{ wiki.display_name }} &mdash; Settings{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center mb-4">
-  <h2 class="mb-0">{{ wiki.display_name }}</h2>
-  <a href="https://{{ wiki.slug }}.{{ platform_domain }}" class="ms-3 text-muted small">{{ wiki.slug }}.{{ platform_domain }}</a>
+<!-- Header -->
+<div class="d-flex align-items-center mb-20">
+  <h2 class="mb-0 mr-15">{{ wiki.display_name }}</h2>
+  <a href="https://{{ wiki.slug }}.{{ platform_domain }}" class="text-muted small" target="_blank">
+    {{ wiki.slug }}.{{ platform_domain }}
+  </a>
 </div>
 
-<!-- Display name -->
-<div class="card mb-4">
+<!-- Quick actions -->
+<div class="mb-20">
+  <a href="https://{{ wiki.slug }}.{{ platform_domain }}" class="btn btn-primary mr-10" target="_blank">
+    Open wiki
+  </a>
+  <a href="https://{{ wiki.slug }}.{{ platform_domain }}/-/admin" class="btn btn-outline-secondary" target="_blank">
+    Manage users &amp; settings
+  </a>
+</div>
+
+<!-- MCP card -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">MCP</h5>
+
+    {% if mcp_token %}
+    <div class="alert alert-warning mb-15">
+      <strong>Your MCP bearer token</strong> &mdash; copy it now, it will not be shown again.
+      <div class="token-display mt-10 mb-10" id="mcp-token-{{ wiki.slug }}">{{ mcp_token }}</div>
+      <button class="btn btn-sm btn-outline-secondary"
+              onclick="navigator.clipboard.writeText(document.getElementById('mcp-token-{{ wiki.slug }}').textContent.trim())">
+        Copy token
+      </button>
+    </div>
+    {% endif %}
+
+    <div class="mb-10">
+      <span class="text-muted small">MCP endpoint:</span><br>
+      <code>https://{{ wiki.slug }}.{{ platform_domain }}/mcp</code>
+    </div>
+
+    <div class="mb-15 text-muted small">
+      Claude Code:<br>
+      <code>claude mcp add {{ wiki.slug }} https://{{ wiki.slug }}.{{ platform_domain }}/mcp --transport http --header "Authorization: Bearer TOKEN"</code>
+    </div>
+
+    <form method="POST" action="/app/wiki/{{ wiki.slug }}/mcp/regenerate">
+      <button type="submit" class="btn btn-sm btn-outline-warning"
+              onclick="return confirm('This will disconnect existing MCP clients. Continue?')">
+        Regenerate token
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Display name card -->
+<div class="card mb-20">
   <div class="card-body">
     <h5 class="card-title">Display name</h5>
     <form method="POST" action="/app/wiki/{{ wiki.slug }}/settings">
-      <div class="d-flex gap-2">
-        <input type="text" class="form-control" name="display_name" value="{{ wiki.display_name }}" required>
-        <button type="submit" class="btn btn-outline-primary">Save</button>
+      <div class="input-group">
+        <input type="text" class="form-control" name="display_name"
+               value="{{ wiki.display_name }}" required>
+        <div class="input-group-append">
+          <button type="submit" class="btn btn-outline-primary">Save</button>
+        </div>
       </div>
     </form>
   </div>
 </div>
 
-<!-- Otterwiki admin -->
-<div class="card mb-4">
-  <div class="card-body">
-    <h5 class="card-title">Wiki admin panel</h5>
-    <p class="text-muted">Manage wiki content, users, and settings directly in Otterwiki.</p>
-    <a href="https://{{ wiki.slug }}.{{ platform_domain }}/-/admin" class="btn btn-outline-secondary" target="_blank">
-      Open admin panel
-    </a>
-  </div>
-</div>
-
 <!-- Danger zone -->
-<div class="card border-danger">
-  <div class="card-body">
-    <h5 class="card-title text-danger">Danger zone</h5>
-    <p>Deleting a wiki removes all pages, history, and user access. This cannot be undone.</p>
-    <button type="button" class="btn btn-outline-danger" data-bs-toggle="collapse" data-bs-target="#delete-confirm">
-      Delete this wiki
-    </button>
-    <div class="collapse mt-3" id="delete-confirm">
-      <form method="POST" action="/app/wiki/{{ wiki.slug }}/delete">
-        <div class="mb-2">
-          <label class="form-label">Type <strong>{{ wiki.slug }}</strong> to confirm:</label>
-          <input type="text" class="form-control" name="confirm_slug" required
-                 pattern="{{ wiki.slug }}" title="Type the wiki slug to confirm deletion.">
-        </div>
-        <button type="submit" class="btn btn-danger">Permanently delete {{ wiki.slug }}</button>
-      </form>
-    </div>
+<details class="collapse-panel card">
+  <summary class="collapse-header text-danger">Danger zone</summary>
+  <div class="collapse-content">
+    <p class="text-muted mb-15">Deleting removes all pages and history. This cannot be undone.</p>
+    <form method="POST" action="/app/wiki/{{ wiki.slug }}/delete">
+      <div class="mb-10">
+        <label>Type <strong>{{ wiki.slug }}</strong> to confirm:</label>
+        <input type="text" class="form-control mt-5" name="confirm_slug" required
+               pattern="{{ wiki.slug }}" title="Type the wiki slug to confirm deletion.">
+      </div>
+      <button type="submit" class="btn btn-danger">Permanently delete {{ wiki.slug }}</button>
+    </form>
   </div>
-</div>
+</details>
 {% endblock %}
