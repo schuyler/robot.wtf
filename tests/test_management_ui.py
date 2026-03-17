@@ -596,3 +596,101 @@ class TestApiMe:
         assert resp.status_code == 401
         data = resp.get_json()
         assert "error" in data
+
+
+# --- Rate limiting tests ---
+
+
+class TestRateLimiting:
+    """Management UI rate limiting.
+
+    Flask-Limiter disables itself when TESTING=True. To exercise rate limits,
+    we must set RATELIMIT_ENABLED=True explicitly in the app config.
+    """
+
+    @pytest.fixture
+    def rate_limit_app(self, rsa_keys, user_model, wiki_model, platform_jwt, tmp_path):
+        """Management UI app with rate limiting enabled."""
+        import os
+        os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
+        from app.api_server import _create_flask_app
+
+        app = _create_flask_app()
+        app.config["TESTING"] = True
+        app.config["RATELIMIT_ENABLED"] = True
+
+        private_key, public_key = rsa_keys
+        from app.auth.middleware import AuthMiddleware
+        auth_middleware = AuthMiddleware(
+            platform_jwt=platform_jwt,
+            user_model=user_model,
+        )
+        app.config["AUTH_MIDDLEWARE"] = auth_middleware
+        app.config["USER_MODEL"] = user_model
+        app.config["WIKI_MODEL"] = wiki_model
+        app.config["WIKI_BASE"] = str(tmp_path / "wikis")
+
+        yield app
+
+        os.environ.pop("FLASK_SECRET_KEY", None)
+
+    @pytest.fixture
+    def rate_limit_client(self, rate_limit_app):
+        return rate_limit_app.test_client()
+
+    @pytest.fixture
+    def owner_token_rl(self, platform_jwt, owner_user):
+        """Valid JWT for owner user (rate-limit fixture scope)."""
+        return platform_jwt.create_token(
+            user_did="did:plc:owner",
+            handle="owner.bsky.social",
+            display_name="Owner",
+        )
+
+    @pytest.fixture
+    def test_wiki_rl(self, wiki_model, tmp_path):
+        """A wiki record for rate-limit tests (no repo needed)."""
+        return wiki_model.create(
+            slug="rl-wiki",
+            owner_did="did:plc:owner",
+            display_name="RL Wiki",
+            repo_path=str(tmp_path / "rl-wiki" / "repo"),
+            mcp_token_hash="testhash",
+        )
+
+    def test_mcp_regenerate_rate_limited(
+        self, rate_limit_client, owner_token_rl, owner_user, test_wiki_rl
+    ):
+        """POST /app/wiki/<slug>/mcp/regenerate should return 429 after exceeding 2/minute."""
+        rate_limit_client.set_cookie("platform_token", owner_token_rl, domain="localhost")
+        responses = []
+        for _ in range(4):
+            resp = rate_limit_client.post(
+                "/app/wiki/rl-wiki/mcp/regenerate",
+                environ_base={"REMOTE_ADDR": "10.0.0.1"},
+                follow_redirects=False,
+            )
+            responses.append(resp.status_code)
+
+        assert 429 in responses, (
+            f"Expected at least one 429 after exceeding mcp_regenerate rate limit; got: {responses}"
+        )
+
+    def test_wiki_settings_update_rate_limited(
+        self, rate_limit_client, owner_token_rl, owner_user, test_wiki_rl
+    ):
+        """POST /app/wiki/<slug>/settings should return 429 after exceeding 5/minute."""
+        rate_limit_client.set_cookie("platform_token", owner_token_rl, domain="localhost")
+        responses = []
+        for _ in range(7):
+            resp = rate_limit_client.post(
+                "/app/wiki/rl-wiki/settings",
+                data={"display_name": "Updated"},
+                environ_base={"REMOTE_ADDR": "10.0.0.2"},
+                follow_redirects=False,
+            )
+            responses.append(resp.status_code)
+
+        assert 429 in responses, (
+            f"Expected at least one 429 after exceeding wiki_settings_update rate limit; got: {responses}"
+        )

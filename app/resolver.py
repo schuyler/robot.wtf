@@ -584,15 +584,13 @@ class TenantResolver:
         if _is_write_request(method, path):
             client_ip = get_client_ip(environ)
             if not _resolver_limiter.check("wiki_write", client_ip):
-                if path.startswith("/api/"):
-                    return _error_response(start_response, 429, "Rate limit exceeded")
-                # Browser write: return HTML 429
-                body = "<h1>429 Too Many Requests</h1><p>Rate limit exceeded. Please slow down.</p>"
-                body_bytes = body.encode("utf-8")
-                start_response(
-                    "429 Too Many Requests",
-                    [("Content-Type", "text/html"), ("Content-Length", str(len(body_bytes)))],
+                json_response = path.startswith("/api/")
+                status, headers, body_parts = _resolver_limiter.make_429_response(
+                    message="Rate limit exceeded", json_response=json_response
                 )
+                body_bytes = body_parts[0]
+                headers = headers + [("Content-Length", str(len(body_bytes)))]
+                start_response(status, headers)
                 return [body_bytes]
 
         # Build repo path

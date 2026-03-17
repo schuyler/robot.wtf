@@ -871,3 +871,19 @@ class TestRateLimiting:
         assert 429 in responses, (
             f"Expected at least one 429 after exceeding signup rate limit; got: {responses}"
         )
+
+    def test_oauth_consent_post_rate_limited(self, rate_limit_client):
+        """POST /auth/oauth/consent should return 429 after exceeding limit (2/minute per IP)."""
+        data = {"action": "approve"}
+        responses = []
+        for _ in range(4):
+            resp = rate_limit_client.post(
+                "/auth/oauth/consent",
+                data=data,
+                environ_base={"REMOTE_ADDR": "3.4.5.6"},
+            )
+            responses.append(resp.status_code)
+
+        assert 429 in responses, (
+            f"Expected at least one 429 after exceeding oauth_consent rate limit; got: {responses}"
+        )
