@@ -86,6 +86,19 @@ class WikiModel:
         self._conn.execute("DELETE FROM wikis WHERE slug = ?", (slug,))
         self._conn.commit()
 
+    def count(self) -> int:
+        """Return the total number of wikis."""
+        row = self._conn.execute("SELECT COUNT(*) FROM wikis").fetchone()
+        return row[0] if row else 0
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """Return all wikis ordered by creation date (newest first)."""
+        rows = self._conn.execute(
+            "SELECT slug, owner_did, display_name, created_at, last_accessed"
+            " FROM wikis ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_by_token(self, plaintext_token: str) -> dict[str, Any] | None:
         """Find a wiki by its MCP bearer token.
 

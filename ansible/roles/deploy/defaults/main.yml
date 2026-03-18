@@ -4,3 +4,4 @@ robot_services:
   - robot-api
   - robot-auth
   - robot-mcp
+platform_admin_dids: ""

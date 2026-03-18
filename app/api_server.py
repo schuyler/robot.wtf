@@ -563,18 +563,17 @@ def _create_flask_app() -> Flask:
             return result
         user = result
 
-        # Service status
-        services = ["robot-otterwiki", "robot-api", "robot-auth", "robot-mcp"]
-        service_status = {}
-        for svc in services:
-            try:
-                proc = subprocess.run(
-                    ["systemctl", "is-active", svc],
-                    capture_output=True, text=True, timeout=5,
-                )
-                service_status[svc] = proc.stdout.strip()
-            except Exception:
-                service_status[svc] = "unknown"
+        # Service status — single call to avoid 4×5s worst-case latency
+        services = ["robot-otterwiki", "robot-mcp", "robot-api", "robot-auth"]
+        try:
+            out = subprocess.run(
+                ["systemctl", "is-active"] + services,
+                capture_output=True, text=True, timeout=10,
+            )
+            statuses = out.stdout.strip().split("\n")
+            service_status = dict(zip(services, statuses))
+        except Exception:
+            service_status = {svc: "unknown" for svc in services}
 
         # Disk usage
         try:
@@ -591,20 +590,17 @@ def _create_flask_app() -> Flask:
         wiki_model = app.config["WIKI_MODEL"]
         user_model = app.config["USER_MODEL"]
         try:
-            wiki_count = wiki_model._conn.execute("SELECT COUNT(*) FROM wikis").fetchone()[0]
+            wiki_count = wiki_model.count()
         except Exception:
             wiki_count = 0
         try:
-            user_count = wiki_model._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            user_count = user_model.count()
         except Exception:
             user_count = 0
 
         # All wikis list
         try:
-            all_wikis = wiki_model._conn.execute(
-                "SELECT slug, owner_did, display_name, created_at, last_accessed FROM wikis ORDER BY created_at DESC"
-            ).fetchall()
-            all_wikis = [dict(r) for r in all_wikis]
+            all_wikis = wiki_model.list_all()
         except Exception:
             all_wikis = []
 
