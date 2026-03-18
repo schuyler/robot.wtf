@@ -46,7 +46,7 @@
     name: "git+https://github.com/schuyler/otterwiki.git@wikibot-io"
     virtualenv: /srv/app/venv
     state: forcereinstall
-    extra_args: "--no-cache-dir"
+    extra_args: "--no-cache-dir --no-binary otterwiki"
   notify: restart robot services
 
 - name: Install otterwiki-api plugin
@@ -54,7 +54,7 @@
     name: "git+https://github.com/schuyler/otterwiki-api.git"
     virtualenv: /srv/app/venv
     state: forcereinstall
-    extra_args: "--no-cache-dir"
+    extra_args: "--no-cache-dir --no-binary otterwiki-api"
   notify: restart robot services
 
 - name: Install otterwiki-semantic-search plugin
@@ -62,7 +62,7 @@
     name: "git+https://github.com/schuyler/otterwiki-semantic-search.git"
     virtualenv: /srv/app/venv
     state: forcereinstall
-    extra_args: "--no-cache-dir"
+    extra_args: "--no-cache-dir --no-binary otterwiki-semantic-search"
   notify: restart robot services
 
 - name: Install otterwiki-mcp plugin
@@ -70,7 +70,7 @@
     name: "git+https://github.com/schuyler/otterwiki-mcp.git"
     virtualenv: /srv/app/venv
     state: forcereinstall
-    extra_args: "--no-cache-dir"
+    extra_args: "--no-cache-dir --no-binary otterwiki-mcp"
   notify: restart robot services
 
 - name: Install faiss-cpu
