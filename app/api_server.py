@@ -14,9 +14,13 @@ import importlib.util
 import logging
 import os
 import pathlib
+import shutil
+import subprocess
 
 from flask import (
     Flask,
+    abort,
+    current_app,
     flash,
     g,
     jsonify,
@@ -81,6 +85,16 @@ def _get_user_or_redirect():
     if user is None:
         return redirect(f"/auth/login?return_to={request.url}")
     return user
+
+
+def _require_platform_admin():
+    """Return authenticated user if platform admin, redirect or 403 otherwise."""
+    result = _get_user_or_redirect()
+    if not hasattr(result, "user_did"):
+        return result  # login redirect
+    if result.user_did not in current_app.config.get("PLATFORM_ADMIN_DIDS", set()):
+        abort(403)
+    return result
 
 
 def _is_owner(wiki, user_did):
@@ -158,13 +172,14 @@ def _create_flask_app() -> Flask:
 
     @app.context_processor
     def inject_sidebar_data():
-        """Inject sidebar_wikis and platform_domain into all templates."""
+        """Inject sidebar_wikis, platform_domain, and is_platform_admin into all templates."""
         user = getattr(g, "user", None)
         if user is None:
-            return {"sidebar_wikis": [], "platform_domain": PLATFORM_DOMAIN}
+            return {"sidebar_wikis": [], "platform_domain": PLATFORM_DOMAIN, "is_platform_admin": False}
         wiki_model = app.config["WIKI_MODEL"]
         wikis = wiki_model.list_by_owner(user.user_did)
-        return {"sidebar_wikis": wikis, "platform_domain": PLATFORM_DOMAIN}
+        is_platform_admin = user.user_did in app.config.get("PLATFORM_ADMIN_DIDS", set())
+        return {"sidebar_wikis": wikis, "platform_domain": PLATFORM_DOMAIN, "is_platform_admin": is_platform_admin}
 
     # --- Static / Landing ---
 
@@ -540,6 +555,91 @@ def _create_flask_app() -> Flask:
         )
         return resp
 
+    @app.route("/app/admin/stats")
+    def admin_stats():
+        """Platform admin monitoring dashboard."""
+        result = _require_platform_admin()
+        if not hasattr(result, "user_did"):
+            return result
+        user = result
+
+        # Service status
+        services = ["robot-otterwiki", "robot-api", "robot-auth", "robot-mcp"]
+        service_status = {}
+        for svc in services:
+            try:
+                proc = subprocess.run(
+                    ["systemctl", "is-active", svc],
+                    capture_output=True, text=True, timeout=5,
+                )
+                service_status[svc] = proc.stdout.strip()
+            except Exception:
+                service_status[svc] = "unknown"
+
+        # Disk usage
+        try:
+            disk = shutil.disk_usage("/srv")
+            disk_total_gb = disk.total / (1024 ** 3)
+            disk_used_gb = disk.used / (1024 ** 3)
+            disk_free_gb = disk.free / (1024 ** 3)
+            disk_pct = int(disk.used / disk.total * 100) if disk.total else 0
+        except Exception:
+            disk_total_gb = disk_used_gb = disk_free_gb = 0.0
+            disk_pct = 0
+
+        # Platform counts
+        wiki_model = app.config["WIKI_MODEL"]
+        user_model = app.config["USER_MODEL"]
+        try:
+            wiki_count = wiki_model._conn.execute("SELECT COUNT(*) FROM wikis").fetchone()[0]
+        except Exception:
+            wiki_count = 0
+        try:
+            user_count = wiki_model._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        except Exception:
+            user_count = 0
+
+        # All wikis list
+        try:
+            all_wikis = wiki_model._conn.execute(
+                "SELECT slug, owner_did, display_name, created_at, last_accessed FROM wikis ORDER BY created_at DESC"
+            ).fetchall()
+            all_wikis = [dict(r) for r in all_wikis]
+        except Exception:
+            all_wikis = []
+
+        # Journal tail
+        try:
+            proc = subprocess.run(
+                [
+                    "journalctl",
+                    "-u", "robot-otterwiki",
+                    "-u", "robot-api",
+                    "-u", "robot-auth",
+                    "-u", "robot-mcp",
+                    "-n", "50",
+                    "--no-pager",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+            journal = proc.stdout
+        except Exception:
+            journal = "(journal unavailable)"
+
+        return render_template(
+            "admin_stats.html",
+            user=user,
+            service_status=service_status,
+            disk_total_gb=disk_total_gb,
+            disk_used_gb=disk_used_gb,
+            disk_free_gb=disk_free_gb,
+            disk_pct=disk_pct,
+            wiki_count=wiki_count,
+            user_count=user_count,
+            all_wikis=all_wikis,
+            journal=journal,
+        )
+
     return app
 
 
@@ -563,6 +663,9 @@ def _build_app():
     flask_app.config["USER_MODEL"] = user_model
     flask_app.config["WIKI_MODEL"] = wiki_model
     flask_app.config["WIKI_BASE"] = WIKI_BASE
+    flask_app.config["PLATFORM_ADMIN_DIDS"] = set(
+        d.strip() for d in os.environ.get("PLATFORM_ADMIN_DIDS", "").split(",") if d.strip()
+    )
 
     # Wrap Flask app with ManagementMiddleware
     wsgi_app = ManagementMiddleware(

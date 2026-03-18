@@ -699,6 +699,71 @@ class TestContextProcessor:
         assert "domain-wiki.robot.wtf" in html
 
 
+# --- Admin stats tests ---
+
+
+class TestAdminStats:
+    def test_admin_stats_requires_auth(self, client):
+        """Unauthenticated request redirects to login."""
+        resp = client.get("/app/admin/stats")
+        assert resp.status_code == 302
+        assert "/auth/login" in resp.headers["Location"]
+
+    def test_admin_stats_forbidden_for_non_admin(self, client, owner_token, owner_user):
+        """Authenticated non-admin gets 403."""
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/admin/stats")
+        assert resp.status_code == 403
+
+    def test_admin_stats_renders_for_admin(self, flask_app, owner_token, owner_user):
+        """Admin user sees the stats page with expected sections."""
+        flask_app.config["PLATFORM_ADMIN_DIDS"] = {"did:plc:owner"}
+        client = flask_app.test_client()
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/admin/stats")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "System Status" in html
+        assert "Services" in html
+        assert "Disk Usage" in html
+        assert "Platform Counts" in html
+        assert "All Wikis" in html
+        assert "Journal" in html
+
+    def test_admin_stats_sidebar_visible_for_admin(self, flask_app, owner_token, owner_user, wiki_model):
+        """Admin user sees System status link in sidebar."""
+        flask_app.config["PLATFORM_ADMIN_DIDS"] = {"did:plc:owner"}
+        wiki_model.create(
+            slug="admin-sidebar-wiki",
+            owner_did="did:plc:owner",
+            display_name="Admin Sidebar Wiki",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="e" * 64,
+        )
+        client = flask_app.test_client()
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/wiki/admin-sidebar-wiki")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "/app/admin/stats" in html
+        assert "System status" in html
+
+    def test_admin_stats_sidebar_hidden_for_non_admin(self, client, owner_token, owner_user, wiki_model):
+        """Non-admin does not see System status link in sidebar."""
+        wiki_model.create(
+            slug="nonadmin-sidebar-wiki",
+            owner_did="did:plc:owner",
+            display_name="Non-Admin Sidebar Wiki",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="f" * 64,
+        )
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        resp = client.get("/app/wiki/nonadmin-sidebar-wiki")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "/app/admin/stats" not in html
+
+
 # --- Rate limiting tests ---
 
 
