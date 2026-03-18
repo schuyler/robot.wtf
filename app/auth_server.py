@@ -71,7 +71,7 @@ import jwt as pyjwt
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthError
 from app.db import get_connection, init_schema
-from app.models.user import UserModel, validate_username, default_username_from_handle
+from app.models.user import UserModel, default_username_from_handle
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
@@ -265,8 +265,7 @@ def create_app(
                     platform_jwt.validate_token(cookie_token)
                     # Valid JWT — redirect immediately
                     # Clear all auth-flow session keys to prevent stale state
-                    for key in ("return_to", "pending_did", "pending_handle",
-                                "csrf_nonces", "signup_state"):
+                    for key in ("return_to", "csrf_nonces"):
                         session.pop(key, None)
                     redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
                     return redirect(redirect_target)
@@ -483,11 +482,25 @@ def create_app(
         user = user_model.get(did)
 
         if user is None:
-            # First-time user — redirect to signup
-            # Store DID and handle in session for the signup flow
-            session["pending_did"] = did
-            session["pending_handle"] = handle
-            return redirect("/auth/signup")
+            # First-time user — auto-create inline (no signup redirect needed)
+            display_name = _fetch_display_name(did) or handle
+            try:
+                user = user_model.create(
+                    did=did,
+                    handle=handle,
+                    display_name=display_name,
+                )
+            except Exception:
+                # Race condition: double-callback for same DID — use INSERT OR IGNORE fallback
+                db.execute(
+                    """INSERT OR IGNORE INTO users
+                       (did, handle, display_name, created_at, wiki_count)
+                       VALUES (?, ?, ?, ?, 0)""",
+                    (did, handle, display_name,
+                     datetime.now(timezone.utc).isoformat()),
+                )
+                db.commit()
+                user = user_model.get(did)
 
         # Returning user — update handle if changed
         if user["handle"] != handle:
@@ -500,98 +513,6 @@ def create_app(
         token = platform_jwt.create_token(
             user_did=did,
             handle=handle,
-            display_name=display_name,
-        )
-
-        # Check for a return_to URL (e.g., from MCP consent flow or wiki redirect)
-        return_to = session.pop("return_to", None)
-        # Defense in depth: reject unsafe URLs stored in session
-        if return_to and not _is_safe_return_url(return_to):
-            return_to = None
-        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
-
-        resp = make_response(redirect(redirect_target))
-        resp.set_cookie(
-            COOKIE_NAME,
-            token,
-            max_age=COOKIE_MAX_AGE,
-            httponly=True,
-            secure=True,
-            samesite="Lax",
-            domain=COOKIE_DOMAIN,
-        )
-        return resp
-
-    @app.route("/auth/signup", methods=("GET", "POST"))
-    @limiter.limit("1/minute", methods=["POST"])
-    def signup():
-        """Signup form for first-time users."""
-        pending_did = session.get("pending_did")
-        pending_handle = session.get("pending_handle")
-
-        if not pending_did or not pending_handle:
-            return redirect("/auth/login")
-
-        default_username = default_username_from_handle(pending_handle)
-
-        if request.method != "POST":
-            return render_template(
-                "signup.html",
-                handle=pending_handle,
-                default_username=default_username,
-            )
-
-        username = request.form.get("username", "").strip().lower()
-
-        # Validate username
-        valid, error_msg = validate_username(username)
-        if not valid:
-            flash(error_msg, "error")
-            return render_template(
-                "signup.html",
-                handle=pending_handle,
-                default_username=username,
-            ), 400
-
-        # Check uniqueness
-        user_model = _get_user_model()
-        existing = user_model.get_by_username(username)
-        if existing:
-            flash("Username is already taken", "error")
-            return render_template(
-                "signup.html",
-                handle=pending_handle,
-                default_username=username,
-            ), 400
-
-        # Fetch display name
-        display_name = _fetch_display_name(pending_did) or pending_handle
-
-        # Create user
-        try:
-            user = user_model.create(
-                did=pending_did,
-                handle=pending_handle,
-                display_name=display_name,
-                username=username,
-            )
-        except Exception as e:
-            logger.error("Failed to create user: %s", e)
-            flash("Failed to create account. Please try again.", "error")
-            return render_template(
-                "signup.html",
-                handle=pending_handle,
-                default_username=username,
-            ), 500
-
-        # Clear pending session
-        session.pop("pending_did", None)
-        session.pop("pending_handle", None)
-
-        # Issue platform JWT
-        token = platform_jwt.create_token(
-            user_did=pending_did,
-            handle=pending_handle,
             display_name=display_name,
         )
 

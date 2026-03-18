@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from app.models.user import UserModel, validate_username, default_username_from_handle
+from app.models.user import UserModel, default_username_from_handle
 from app.models.wiki import WikiModel
 
 
@@ -19,12 +19,11 @@ class TestUserModel:
             did="did:plc:test1",
             handle="bob.bsky.social",
             display_name="Bob",
-            username="bob",
         )
         assert user["did"] == "did:plc:test1"
         assert user["handle"] == "bob.bsky.social"
         assert user["display_name"] == "Bob"
-        assert user["username"] == "bob"
+        assert user["username"] is None
         assert user["wiki_count"] == 0
         assert user["created_at"] is not None
 
@@ -32,28 +31,33 @@ class TestUserModel:
         assert fetched is not None
         assert fetched["did"] == "did:plc:test1"
 
+    def test_create_without_username_succeeds(self, user_model):
+        """Creating a user without username should succeed (nullable)."""
+        user = user_model.create(
+            did="did:plc:nouser1",
+            handle="nouser.bsky.social",
+            display_name="No User",
+        )
+        assert user["username"] is None
+
+    def test_create_with_username(self, user_model):
+        """Creating a user with username should still work."""
+        user = user_model.create(
+            did="did:plc:withuser1",
+            handle="withuser.bsky.social",
+            display_name="With User",
+            username="withuser",
+        )
+        assert user["username"] == "withuser"
+
     def test_get_not_found(self, user_model):
         assert user_model.get("did:plc:nonexistent") is None
-
-    def test_get_by_username(self, user_model):
-        user_model.create(
-            did="did:plc:u1",
-            handle="charlie.bsky.social",
-            display_name="Charlie",
-            username="charlie",
-        )
-        found = user_model.get_by_username("charlie")
-        assert found is not None
-        assert found["did"] == "did:plc:u1"
-
-        assert user_model.get_by_username("nonexistent") is None
 
     def test_update(self, user_model):
         user_model.create(
             did="did:plc:u2",
             handle="dave.bsky.social",
             display_name="Dave",
-            username="dave",
         )
         updated = user_model.update("did:plc:u2", display_name="David")
         assert updated["display_name"] == "David"
@@ -72,13 +76,13 @@ class TestUserModel:
             did="did:plc:u3",
             handle="eve.bsky.social",
             display_name="Eve",
-            username="eve",
         )
         assert user_model.get("did:plc:u3") is not None
         user_model.delete("did:plc:u3")
         assert user_model.get("did:plc:u3") is None
 
     def test_unique_username_constraint(self, db, user_model):
+        """Two users with the same non-NULL username should fail."""
         user_model.create(
             did="did:plc:u4",
             handle="frank.bsky.social",
@@ -93,86 +97,35 @@ class TestUserModel:
                 username="frank",
             )
 
+    def test_null_username_not_unique_constraint(self, db, user_model):
+        """Two users with NULL username should NOT conflict (nullable unique)."""
+        user_model.create(
+            did="did:plc:null1",
+            handle="null1.bsky.social",
+            display_name="Null1",
+        )
+        # This should not raise
+        user_model.create(
+            did="did:plc:null2",
+            handle="null2.bsky.social",
+            display_name="Null2",
+        )
+        assert user_model.get("did:plc:null1") is not None
+        assert user_model.get("did:plc:null2") is not None
+
     def test_unique_did_constraint(self, db, user_model):
         user_model.create(
             did="did:plc:u6",
             handle="grace.bsky.social",
             display_name="Grace",
-            username="grace",
         )
         with pytest.raises(sqlite3.IntegrityError):
             user_model.create(
                 did="did:plc:u6",
                 handle="grace2.bsky.social",
                 display_name="Grace2",
-                username="grace2",
             )
 
-    def test_set_username(self, user_model):
-        user_model.create(
-            did="did:plc:u7",
-            handle="heidi.bsky.social",
-            display_name="Heidi",
-            username="heidi",
-        )
-        updated = user_model.set_username("did:plc:u7", "heidi-new")
-        assert updated["username"] == "heidi-new"
-
-    def test_set_username_taken(self, user_model):
-        user_model.create(
-            did="did:plc:u8",
-            handle="ivan.bsky.social",
-            display_name="Ivan",
-            username="ivan",
-        )
-        user_model.create(
-            did="did:plc:u9",
-            handle="judy.bsky.social",
-            display_name="Judy",
-            username="judy",
-        )
-        with pytest.raises(ValueError, match="already taken"):
-            user_model.set_username("did:plc:u9", "ivan")
-
-
-class TestValidateUsername:
-    def test_valid(self):
-        assert validate_username("alice")[0] is True
-        assert validate_username("my-wiki-123")[0] is True
-        assert validate_username("abc")[0] is True
-
-    def test_empty(self):
-        ok, err = validate_username("")
-        assert ok is False
-        assert "required" in err.lower()
-
-    def test_uppercase(self):
-        ok, err = validate_username("Alice")
-        assert ok is False
-        assert "lowercase" in err.lower()
-
-    def test_too_short(self):
-        ok, err = validate_username("ab")
-        assert ok is False
-        assert "3 characters" in err
-
-    def test_too_long(self):
-        ok, err = validate_username("a" * 31)
-        assert ok is False
-        assert "30 characters" in err
-
-    def test_leading_hyphen(self):
-        ok, err = validate_username("-alice")
-        assert ok is False
-
-    def test_trailing_hyphen(self):
-        ok, err = validate_username("alice-")
-        assert ok is False
-
-    def test_reserved(self):
-        ok, err = validate_username("admin")
-        assert ok is False
-        assert "reserved" in err.lower()
 
 
 class TestDefaultUsernameFromHandle:

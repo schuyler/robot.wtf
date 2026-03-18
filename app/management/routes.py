@@ -22,7 +22,7 @@ from app.constants import MAX_PAGES_PER_WIKI
 from app.management.token import generate_mcp_token
 from app.rate_limit import WSGIRateLimiter, get_client_ip
 from app.resolver import _init_wiki_db, _initialized_dbs
-from app.models.user import RESERVED_NAMES, UserModel, validate_username
+from app.models.user import RESERVED_NAMES, UserModel
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,6 @@ def validate_slug(slug: str) -> tuple[bool, str | None]:
 
 
 # Route patterns
-_USERNAME_ENDPOINT = re.compile(r"^/api/username$")
 _AUTH_CALLBACK = re.compile(r"^/api/auth/callback$")
 _WIKIS_COLLECTION = re.compile(r"^/api/wikis$")
 _WIKI_DETAIL = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)$")
@@ -233,12 +232,6 @@ class ManagementMiddleware:
         environ: dict,
     ) -> tuple[int, dict]:
         """Dispatch to the correct handler based on method + path."""
-        m = _USERNAME_ENDPOINT.match(path)
-        if m:
-            if method == "POST":
-                return self._set_username(user, environ)
-            return 405, {"error": "Method not allowed"}
-
         m = _WIKIS_COLLECTION.match(path)
         if m:
             if method == "POST":
@@ -264,36 +257,6 @@ class ManagementMiddleware:
             return 405, {"error": "Method not allowed"}
 
         return 404, {"error": "Not found"}
-
-    # --- Username ---
-
-    def _set_username(
-        self, user: AuthenticatedUser, environ: dict
-    ) -> tuple[int, dict]:
-        """Set the authenticated user's username."""
-        body = _read_json_body(environ)
-        username = body.get("username", "").strip().lower()
-
-        valid, error = validate_username(username)
-        if not valid:
-            return 400, {"error": error}
-
-        existing = self._users.get_by_username(username)
-        if existing and existing["did"] != user.user_did:
-            return 409, {"error": "Username is already taken"}
-
-        try:
-            updated = self._users.set_username(user.user_did, username)
-        except ValueError as e:
-            error_msg = str(e)
-            if "taken" in error_msg.lower():
-                return 409, {"error": error_msg}
-            return 400, {"error": error_msg}
-
-        return 200, {
-            "username": updated.get("username"),
-            "user_did": updated.get("did"),
-        }
 
     # --- Auth ---
 

@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
     handle TEXT NOT NULL,
     display_name TEXT,
     avatar_url TEXT,
-    username TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE,
     created_at TEXT NOT NULL,
     wiki_count INTEGER DEFAULT 0
 );

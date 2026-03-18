@@ -293,13 +293,13 @@ class TestOAuthCallback:
             "nonce1",
         )
 
-        # Pre-create user in DB
+        # Pre-create user in DB (no username)
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("did:plc:testcb1", "alice.bsky.social", "Alice", "alice", now),
+            "INSERT INTO users (did, handle, display_name, created_at) VALUES (?, ?, ?, ?)",
+            ("did:plc:testcb1", "alice.bsky.social", "Alice", now),
         )
 
         # Create a DPoP JWK for the auth request
@@ -355,8 +355,8 @@ class TestOAuthCallback:
         conn.row_factory = sqlite3.Row
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("did:plc:testcb2", "alice2.bsky.social", "Alice2", "alice2", now),
+            "INSERT INTO users (did, handle, display_name, created_at) VALUES (?, ?, ?, ?)",
+            ("did:plc:testcb2", "alice2.bsky.social", "Alice2", now),
         )
         dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
         conn.execute(
@@ -393,10 +393,10 @@ class TestOAuthCallback:
 
     @patch("app.auth_server.initial_token_request")
     @patch("app.auth_server._fetch_display_name")
-    def test_callback_new_user_redirects_to_signup(
+    def test_callback_new_user_auto_creates_and_sets_cookie(
         self, mock_display, mock_token, app, client, db_path
     ):
-        """A first-time user should be redirected to /auth/signup."""
+        """A first-time user should be auto-created and get a JWT cookie."""
         mock_display.return_value = "New User"
         mock_token.return_value = (
             {"sub": "did:plc:newuser1", "scope": "atproto", "access_token": "at2", "refresh_token": "rt2"},
@@ -432,113 +432,24 @@ class TestOAuthCallback:
             "/auth/callback?state=test-state-new&iss=https://bsky.social&code=authcode2"
         )
         assert resp.status_code == 302
-        assert "/auth/signup" in resp.headers["Location"]
-
-
-# --- Signup Flow ---
-
-
-class TestSignupFlow:
-    def test_signup_get_without_session_redirects(self, client):
-        """Accessing signup without pending session should redirect to login."""
-        resp = client.get("/auth/signup")
-        assert resp.status_code == 302
-        assert "/auth/login" in resp.headers["Location"]
-
-    def test_signup_renders_form(self, app, client):
-        """With a pending session, signup should render the form."""
-        with client.session_transaction() as sess:
-            sess["pending_did"] = "did:plc:signup1"
-            sess["pending_handle"] = "signup.bsky.social"
-
-        resp = client.get("/auth/signup")
-        assert resp.status_code == 200
-        assert b"username" in resp.data
-        assert b"signup.bsky.social" in resp.data
-
-    @patch("app.auth_server._fetch_display_name")
-    def test_signup_creates_user(self, mock_display, app, client, db_path):
-        """Posting a valid username should create the user and set a cookie."""
-        mock_display.return_value = "Signup User"
-
-        with client.session_transaction() as sess:
-            sess["pending_did"] = "did:plc:signup2"
-            sess["pending_handle"] = "signup2.bsky.social"
-
-        resp = client.post("/auth/signup", data={"username": "signup2"})
-        assert resp.status_code == 302
+        # Should set a platform_token cookie (user auto-created)
         cookie_header = resp.headers.get("Set-Cookie", "")
         assert "platform_token=" in cookie_header
+        # Should NOT redirect to signup
+        assert "/auth/signup" not in resp.headers["Location"]
+        assert resp.headers["Location"].endswith("/app/")
 
         # Verify user was created in DB
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT * FROM users WHERE did = ?", ("did:plc:signup2",)
+            "SELECT * FROM users WHERE did = ?", ("did:plc:newuser1",)
         ).fetchone()
         conn.close()
         assert row is not None
-        assert row["username"] == "signup2"
-        assert row["handle"] == "signup2.bsky.social"
-        assert resp.headers["Location"].endswith("/app/")
+        assert row["handle"] == "newuser.bsky.social"
+        assert row["username"] is None
 
-    @patch("app.auth_server._fetch_display_name")
-    def test_signup_return_to_takes_precedence(self, mock_display, app, client, db_path):
-        """return_to in session should override /app/ default after signup."""
-        mock_display.return_value = "Signup User RT"
-
-        with client.session_transaction() as sess:
-            sess["pending_did"] = "did:plc:signup_rt"
-            sess["pending_handle"] = "signuprt.bsky.social"
-            sess["return_to"] = "/auth/oauth/consent?client_id=test-client"
-
-        resp = client.post("/auth/signup", data={"username": "signuprt"})
-        assert resp.status_code == 302
-        assert resp.headers["Location"] == "/auth/oauth/consent?client_id=test-client"
-        assert not resp.headers["Location"].endswith("/app/")
-
-    def test_signup_rejects_invalid_username(self, app, client):
-        """Invalid usernames should be rejected with a 400."""
-        with client.session_transaction() as sess:
-            sess["pending_did"] = "did:plc:signup3"
-            sess["pending_handle"] = "signup3.bsky.social"
-
-        resp = client.post("/auth/signup", data={"username": "ab"})  # too short
-        assert resp.status_code == 400
-
-    def test_signup_rejects_reserved_username(self, app, client):
-        """Reserved usernames should be rejected."""
-        with client.session_transaction() as sess:
-            sess["pending_did"] = "did:plc:signup4"
-            sess["pending_handle"] = "signup4.bsky.social"
-
-        resp = client.post("/auth/signup", data={"username": "admin"})
-        assert resp.status_code == 400
-
-    @patch("app.auth_server._fetch_display_name")
-    def test_signup_rejects_duplicate_username(
-        self, mock_display, app, client, db_path
-    ):
-        """Duplicate usernames should be rejected."""
-        mock_display.return_value = "Dup User"
-
-        # Create existing user
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("did:plc:existing", "existing.bsky.social", "Existing", "taken", now),
-        )
-        conn.commit()
-        conn.close()
-
-        with client.session_transaction() as sess:
-            sess["pending_did"] = "did:plc:signup5"
-            sess["pending_handle"] = "signup5.bsky.social"
-
-        resp = client.post("/auth/signup", data={"username": "taken"})
-        assert resp.status_code == 400
 
 
 # --- Logout ---
@@ -648,8 +559,8 @@ class TestReturnToValidation:
             conn.row_factory = sqlite3.Row
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
-                "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
-                ("did:plc:retto1", "alice.bsky.social", "Alice", "aliceretto", now),
+                "INSERT INTO users (did, handle, display_name, created_at) VALUES (?, ?, ?, ?)",
+                ("did:plc:retto1", "alice.bsky.social", "Alice", now),
             )
             dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
             conn.execute(
@@ -854,22 +765,6 @@ class TestRateLimiting:
 
         assert 429 in responses, (
             f"Expected at least one 429 after exceeding login rate limit; got: {responses}"
-        )
-
-    def test_signup_post_rate_limited(self, rate_limit_client):
-        """POST /auth/signup should return 429 after exceeding limit."""
-        data = {"username": "someuser"}
-        responses = []
-        for _ in range(3):
-            resp = rate_limit_client.post(
-                "/auth/signup",
-                data=data,
-                environ_base={"REMOTE_ADDR": "2.3.4.5"},
-            )
-            responses.append(resp.status_code)
-
-        assert 429 in responses, (
-            f"Expected at least one 429 after exceeding signup rate limit; got: {responses}"
         )
 
     def test_oauth_consent_post_rate_limited(self, rate_limit_client):

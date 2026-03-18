@@ -10,11 +10,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-# Username validation: lowercase alphanumeric + hyphens, 3-30 chars,
-# no leading/trailing hyphens
-_USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$")
-
-# Canonical set of reserved names — used for both usernames and wiki slugs.
+# Canonical set of reserved names — used for wiki slug validation.
 # Includes infrastructure subdomains and DNS-sensitive names that would
 # conflict if slugs become subdomains ({slug}.robot.wtf).
 RESERVED_NAMES = frozenset({
@@ -23,32 +19,6 @@ RESERVED_NAMES = frozenset({
     "ns", "ns1", "ns2", "null", "pop", "smtp", "ssh", "static",
     "status", "support", "undefined", "user", "vpn", "wiki", "www",
 })
-
-# Keep old name as alias for backwards compatibility with any direct imports.
-RESERVED_USERNAMES = RESERVED_NAMES
-
-
-def validate_username(username: str) -> tuple[bool, str | None]:
-    """Validate a username against format and reserved-name rules.
-
-    Returns:
-        (True, None) if valid, (False, error_message) if invalid.
-    """
-    if not username:
-        return False, "Username is required"
-    if username != username.lower():
-        return False, "Username must be lowercase"
-    if not _USERNAME_PATTERN.match(username):
-        if len(username) < 3:
-            return False, "Username must be at least 3 characters"
-        if len(username) > 30:
-            return False, "Username must be at most 30 characters"
-        if username.startswith("-") or username.endswith("-"):
-            return False, "Username must not start or end with a hyphen"
-        return False, "Username must contain only lowercase letters, digits, and hyphens"
-    if username in RESERVED_NAMES:
-        return False, "Username is reserved"
-    return True, None
 
 
 def default_username_from_handle(handle: str) -> str:
@@ -97,7 +67,7 @@ class UserModel:
         handle: str,
         display_name: str | None = None,
         avatar_url: str | None = None,
-        username: str,
+        username: str | None = None,
     ) -> dict[str, Any]:
         """Create a new user. Returns the user dict."""
         now = datetime.now(timezone.utc).isoformat()
@@ -114,13 +84,6 @@ class UserModel:
         """Get user by DID. Returns None if not found."""
         row = self._conn.execute(
             "SELECT * FROM users WHERE did = ?", (did,)
-        ).fetchone()
-        return _row_to_dict(row)
-
-    def get_by_username(self, username: str) -> dict[str, Any] | None:
-        """Look up user by username."""
-        row = self._conn.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
         ).fetchone()
         return _row_to_dict(row)
 
@@ -143,22 +106,6 @@ class UserModel:
         if cursor.rowcount == 0:
             raise ValueError("User not found")
         return self.get(did)  # type: ignore[return-value]
-
-    def set_username(self, did: str, username: str) -> dict[str, Any]:
-        """Set a username for a user, with validation and uniqueness check.
-
-        Raises:
-            ValueError: If username is invalid, reserved, or already taken.
-        """
-        valid, error = validate_username(username)
-        if not valid:
-            raise ValueError(error)
-
-        existing = self.get_by_username(username)
-        if existing and existing["did"] != did:
-            raise ValueError("Username is already taken")
-
-        return self.update(did, username=username)
 
     def count(self) -> int:
         """Return the total number of users."""

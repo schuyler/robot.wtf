@@ -118,23 +118,21 @@ def wiki_model(db):
 
 @pytest.fixture
 def owner_user(user_model):
-    """Create an owner user with username."""
+    """Create an owner user (no username)."""
     return user_model.create(
         did="did:plc:owner",
         handle="owner.bsky.social",
         display_name="Owner",
-        username="owner",
     )
 
 
 @pytest.fixture
 def collab_user(user_model):
-    """Create a collaborator user."""
+    """Create a collaborator user (no username)."""
     return user_model.create(
         did="did:plc:collab",
         handle="collab.bsky.social",
         display_name="Collab",
-        username="collab",
     )
 
 
@@ -258,20 +256,6 @@ class TestSlugValidation:
         ok, err = validate_slug("www")
         assert ok is False
         assert "reserved" in err
-
-
-# --- Set Username Tests ---
-
-
-class TestSetUsername:
-    def test_set_username(self, middleware, owner_user):
-        status, body = _call_api(
-            middleware, "POST", "/api/username",
-            body={"username": "newname"},
-        )
-        assert status == 200
-        assert body["username"] == "newname"
-        assert body["user_did"] == "did:plc:owner"
 
 
 # --- Wiki Lifecycle Tests ---

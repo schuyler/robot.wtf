@@ -11,11 +11,7 @@
     <table class="table table-sm mb-0">
       <tbody>
         <tr>
-          <th style="width: 150px;">Username</th>
-          <td>{{ user_record.username or "Not set" }}</td>
-        </tr>
-        <tr>
-          <th>Bluesky handle</th>
+          <th style="width: 150px;">Bluesky handle</th>
           <td>{{ user_record.handle }}</td>
         </tr>
         <tr>
@@ -38,8 +34,8 @@
     <p class="mb-15">This will delete your account and all associated wikis. This cannot be undone.</p>
     <form method="POST" action="/app/account/delete">
       <div class="mb-10">
-        <label>Type <strong>{{ user_record.username or user_record.handle }}</strong> to confirm:</label>
-        <input type="text" class="form-control mt-5" name="confirm_username" required>
+        <label>Type <strong>{{ user_record.handle }}</strong> to confirm:</label>
+        <input type="text" class="form-control mt-5" name="confirm_handle" required>
       </div>
       <button type="submit" class="btn btn-danger">Permanently delete my account</button>
     </form>

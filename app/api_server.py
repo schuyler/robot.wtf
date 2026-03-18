@@ -237,7 +237,6 @@ def _create_flask_app() -> Flask:
         return jsonify({
             "did": record["did"],
             "handle": record["handle"],
-            "username": record.get("username"),
             "display_name": record.get("display_name"),
         })
 
@@ -275,7 +274,7 @@ def _create_flask_app() -> Flask:
         wiki_model = app.config["WIKI_MODEL"]
 
         if request.method == "GET":
-            default_slug = user.record.get("username") or default_username_from_handle(user.handle or "")
+            default_slug = default_username_from_handle(user.handle or "")
             return render_template(
                 "wiki_create.html",
                 user=user,
@@ -524,8 +523,8 @@ def _create_flask_app() -> Flask:
             flash("User not found.", "danger")
             return redirect(url_for("dashboard"))
 
-        confirm = request.form.get("confirm_username", "").strip()
-        expected = record.get("username") or record.get("handle", "")
+        confirm = request.form.get("confirm_handle", "").strip()
+        expected = record.get("handle", "")
         if confirm != expected:
             flash("Confirmation did not match.", "danger")
             return redirect(url_for("account"))

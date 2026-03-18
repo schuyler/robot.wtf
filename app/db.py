@@ -37,6 +37,52 @@ def get_connection(db_path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def migrate_username_nullable(conn: sqlite3.Connection) -> bool:
+    """Migrate the users table so that username becomes nullable.
+
+    Uses the SQLite table-rebuild pattern:
+      CREATE users_new → INSERT SELECT → DROP users → RENAME users_new
+
+    NOTE: This rebuild loses any triggers on the users table.
+    As of this migration there are no triggers, so that is safe.
+
+    Foreign keys are temporarily disabled because wikis.owner_did references
+    users(did), and SQLite would otherwise refuse the DROP.
+
+    Returns True if migration was performed, False if already nullable.
+    """
+    # Check current nullability via PRAGMA table_info
+    rows = conn.execute("PRAGMA table_info(users)").fetchall()
+    username_col = next((r for r in rows if r[1] == "username"), None)
+    if username_col is None:
+        return False  # column doesn't exist — nothing to do
+    # PRAGMA table_info: col index 3 is "notnull" (1 = NOT NULL)
+    if username_col[3] == 0:
+        return False  # already nullable
+
+    with conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute(
+            """CREATE TABLE users_new (
+                did TEXT PRIMARY KEY,
+                handle TEXT NOT NULL,
+                display_name TEXT,
+                avatar_url TEXT,
+                username TEXT UNIQUE,
+                created_at TEXT NOT NULL,
+                wiki_count INTEGER DEFAULT 0
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO users_new SELECT did, handle, display_name, avatar_url, "
+            "username, created_at, wiki_count FROM users"
+        )
+        conn.execute("DROP TABLE users")
+        conn.execute("ALTER TABLE users_new RENAME TO users")
+        conn.execute("PRAGMA foreign_keys=ON")
+    return True
+
+
 def init_schema(conn: sqlite3.Connection, schema_path: str | None = None) -> None:
     """Initialize the database schema from the SQL file.
 

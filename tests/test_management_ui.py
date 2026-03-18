@@ -92,7 +92,6 @@ def owner_user(user_model):
         did="did:plc:owner",
         handle="owner.bsky.social",
         display_name="Owner",
-        username="owner",
     )
 
 
@@ -102,7 +101,6 @@ def collab_user(user_model):
         did="did:plc:collab",
         handle="collab.bsky.social",
         display_name="Collab",
-        username="collab",
     )
 
 
@@ -257,10 +255,11 @@ class TestWikiCreate:
         assert 'name="slug"' in html
 
     def test_create_form_default_slug(self, client, owner_token, owner_user):
-        """Default slug should be the username."""
+        """Default slug should be derived from handle when username is absent."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.get("/app/create")
         html = resp.data.decode()
+        # handle "owner.bsky.social" -> slug "owner"
         assert 'value="owner"' in html
 
     @patch("app.api_server._init_wiki_repo")
@@ -334,19 +333,15 @@ class TestWikiCreate:
         html = resp.data.decode()
         assert "Display name is required" in html
 
-    def test_create_form_default_slug_from_handle_when_no_username(
+    def test_create_form_default_slug_from_handle(
         self, client, platform_jwt, user_model
     ):
-        """User with no username gets handle-derived slug default."""
-        # Create a user with empty username (bypassing model validation)
+        """User without username gets handle-derived slug default."""
         user_model.create(
             did="did:plc:nouser",
             handle="nouser.bsky.social",
             display_name="No User",
-            username="nouser",
         )
-        # Clear the username so default_username_from_handle kicks in
-        user_model.update("did:plc:nouser", username="")
         token = platform_jwt.create_token(
             user_did="did:plc:nouser",
             handle="nouser.bsky.social",
@@ -361,14 +356,12 @@ class TestWikiCreate:
     def test_create_form_empty_default_slug_when_handle_is_reserved(
         self, client, platform_jwt, user_model
     ):
-        """User with no username and a handle that produces a reserved slug gets empty default."""
+        """User with a handle that produces a reserved slug gets empty default."""
         user_model.create(
             did="did:plc:adminuser",
             handle="admin.bsky.social",
             display_name="Admin User",
-            username="adminbsky",
         )
-        user_model.update("did:plc:adminuser", username="")
         token = platform_jwt.create_token(
             user_did="did:plc:adminuser",
             handle="admin.bsky.social",
@@ -380,6 +373,34 @@ class TestWikiCreate:
         html = resp.data.decode()
         # slug field should have empty value
         assert 'value=""' in html
+
+    @patch("app.api_server._init_wiki_repo")
+    def test_create_wiki_with_null_username_derives_slug_from_handle(
+        self, mock_init, client, platform_jwt, user_model, wiki_model
+    ):
+        """Wiki creation with null-username user derives default slug from handle."""
+        user_model.create(
+            did="did:plc:slughook",
+            handle="slughook.bsky.social",
+            display_name="Slug Hook",
+        )
+        token = platform_jwt.create_token(
+            user_did="did:plc:slughook",
+            handle="slughook.bsky.social",
+            display_name="Slug Hook",
+        )
+        client.set_cookie("platform_token", token, domain="localhost")
+        resp = client.post(
+            "/app/create",
+            data={
+                "slug": "slughook",
+                "display_name": "Slug Hook Wiki",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        wiki = wiki_model.get("slughook")
+        assert wiki is not None
 
 
 # --- Wiki settings tests ---
@@ -596,10 +617,10 @@ class TestAccount:
             "/app/create",
             data={"slug": "doomed-wiki", "display_name": "Doomed Wiki"},
         )
-        # Delete account
+        # Delete account — confirm_handle must match the full handle
         resp = client.post(
             "/app/account/delete",
-            data={"confirm_username": "owner"},
+            data={"confirm_handle": "owner.bsky.social"},
             follow_redirects=False,
         )
         assert resp.status_code == 302
@@ -612,7 +633,7 @@ class TestAccount:
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.post(
             "/app/account/delete",
-            data={"confirm_username": "wrong"},
+            data={"confirm_handle": "wrong"},
             follow_redirects=True,
         )
         # User should still exist
@@ -630,7 +651,7 @@ class TestApiMe:
         data = resp.get_json()
         assert data["did"] == "did:plc:owner"
         assert data["handle"] == "owner.bsky.social"
-        assert data["username"] == "owner"
+        assert "username" not in data
 
     def test_api_me_unauthenticated(self, client):
         resp = client.get("/api/me")
