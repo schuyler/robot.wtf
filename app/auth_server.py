@@ -69,7 +69,7 @@ import jwt as pyjwt
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthError
 from app.db import get_connection, init_schema
-from app.models.user import UserModel, default_username_from_handle
+from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
 logger = logging.getLogger(__name__)

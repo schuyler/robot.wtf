@@ -60,6 +60,7 @@ def migrate_drop_username(conn: sqlite3.Connection) -> bool:
     conn.execute("PRAGMA foreign_keys=OFF")
     try:
         with conn:
+            conn.execute("DROP TABLE IF EXISTS users_new")
             conn.execute(
                 """CREATE TABLE users_new (
                     did TEXT PRIMARY KEY,
