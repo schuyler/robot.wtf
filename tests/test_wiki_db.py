@@ -250,12 +250,12 @@ def test_init_schema_version_present(db_path):
     assert version == _SCHEMA_VERSION
 
 
-def test_init_access_defaults_are_registered(db_path):
-    """Default access levels should be REGISTERED (not ANONYMOUS) in platform mode."""
+def test_init_access_defaults_are_approved(db_path):
+    """Default access levels should be APPROVED in platform mode."""
     _init_wiki_db(db_path)
-    assert _get_preference(db_path, "READ_ACCESS") == "REGISTERED"
-    assert _get_preference(db_path, "WRITE_ACCESS") == "REGISTERED"
-    assert _get_preference(db_path, "ATTACHMENT_ACCESS") == "REGISTERED"
+    assert _get_preference(db_path, "READ_ACCESS") == "APPROVED"
+    assert _get_preference(db_path, "WRITE_ACCESS") == "APPROVED"
+    assert _get_preference(db_path, "ATTACHMENT_ACCESS") == "APPROVED"
 
 
 def test_init_auth_method_is_proxy_header(db_path):

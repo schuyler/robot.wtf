@@ -83,7 +83,7 @@ def _init_wiki_db(
         db_path: Path to the per-wiki SQLite file.
         site_name: Optional SITE_NAME preference to seed.
         is_public: Unused. Kept for call-site compatibility. Access defaults
-            are now always seeded as REGISTERED via the comprehensive seed list.
+            are now always seeded as APPROVED via the comprehensive seed list.
         owner_handle: If provided, seeds the owner into the per-wiki user
             table as is_admin=True, is_approved=True. The full handle is used
             for the email field (@{owner_handle}).
@@ -139,12 +139,13 @@ def _init_wiki_db(
         # Seed all platform-mode preferences with INSERT OR IGNORE so that
         # user-modified values are never overwritten on re-init.
         platform_preferences = [
-            # Access control: default to REGISTERED so wikis are private by
-            # default. Otterwiki's built-in default is ANONYMOUS which would
-            # make every new wiki world-writable.
-            ("READ_ACCESS", "REGISTERED"),
-            ("WRITE_ACCESS", "REGISTERED"),
-            ("ATTACHMENT_ACCESS", "REGISTERED"),
+            # Access control: default to APPROVED so wikis are truly private by
+            # default — only the owner and explicitly approved users can access.
+            # Otterwiki's built-in default is ANONYMOUS which would make every
+            # new wiki world-writable.
+            ("READ_ACCESS", "APPROVED"),
+            ("WRITE_ACCESS", "APPROVED"),
+            ("ATTACHMENT_ACCESS", "APPROVED"),
             # Auth: platform uses proxy header auth; registration is handled
             # by the platform, not by otterwiki's own registration flow.
             ("AUTH_METHOD", "PROXY_HEADER"),
