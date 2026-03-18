@@ -42,35 +42,27 @@
     virtualenv_python: python3
 
 - name: Install otterwiki from wikibot-io fork
-  ansible.builtin.pip:
-    name: "git+https://github.com/schuyler/otterwiki.git@wikibot-io"
-    virtualenv: /srv/app/venv
-    state: forcereinstall
-    extra_args: "--no-cache-dir --no-binary otterwiki"
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki --force-reinstall 'git+https://github.com/schuyler/otterwiki.git@wikibot-io'
+  changed_when: true
   notify: restart robot services
 
 - name: Install otterwiki-api plugin
-  ansible.builtin.pip:
-    name: "git+https://github.com/schuyler/otterwiki-api.git"
-    virtualenv: /srv/app/venv
-    state: forcereinstall
-    extra_args: "--no-cache-dir --no-binary otterwiki-api"
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki-api --force-reinstall 'git+https://github.com/schuyler/otterwiki-api.git'
+  changed_when: true
   notify: restart robot services
 
 - name: Install otterwiki-semantic-search plugin
-  ansible.builtin.pip:
-    name: "git+https://github.com/schuyler/otterwiki-semantic-search.git"
-    virtualenv: /srv/app/venv
-    state: forcereinstall
-    extra_args: "--no-cache-dir --no-binary otterwiki-semantic-search"
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki-semantic-search --force-reinstall 'git+https://github.com/schuyler/otterwiki-semantic-search.git'
+  changed_when: true
   notify: restart robot services
 
 - name: Install otterwiki-mcp plugin
-  ansible.builtin.pip:
-    name: "git+https://github.com/schuyler/otterwiki-mcp.git"
-    virtualenv: /srv/app/venv
-    state: forcereinstall
-    extra_args: "--no-cache-dir --no-binary otterwiki-mcp"
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki-mcp --force-reinstall 'git+https://github.com/schuyler/otterwiki-mcp.git'
+  changed_when: true
   notify: restart robot services
 
 - name: Install faiss-cpu
