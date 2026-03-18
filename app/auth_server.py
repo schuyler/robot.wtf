@@ -77,6 +77,13 @@ logger = logging.getLogger(__name__)
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
 
 
+def normalize_handle(username: str) -> str:
+    """If username has no dots and looks like a bare Bluesky handle, append .bsky.social."""
+    if "." not in username and ":" not in username and "/" not in username and username:
+        return username + ".bsky.social"
+    return username
+
+
 def _is_safe_return_url(url: str) -> bool:
     """Accept relative URLs and URLs on *.PLATFORM_DOMAIN."""
     if not url:
@@ -309,9 +316,12 @@ def create_app(
         # Strip unicode control chars
         username = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", username)
 
-        # Strip @ prefix
-        if is_valid_handle(username.removeprefix("@")):
-            username = username.removeprefix("@")
+        # Strip @ prefix unconditionally
+        if username.startswith("@"):
+            username = username[1:]
+
+        # Auto-append .bsky.social to bare handles
+        username = normalize_handle(username)
 
         if is_valid_handle(username) or is_valid_did(username):
             login_hint = username

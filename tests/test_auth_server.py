@@ -781,3 +781,57 @@ class TestRateLimiting:
         assert 429 in responses, (
             f"Expected at least one 429 after exceeding oauth_consent rate limit; got: {responses}"
         )
+
+
+# --- normalize_handle unit tests ---
+
+
+class TestNormalizeHandle:
+    """Unit tests for normalize_handle()."""
+
+    def setup_method(self):
+        from app.auth_server import normalize_handle
+        self.normalize_handle = normalize_handle
+
+    def test_bare_handle_appends_bsky_social(self):
+        assert self.normalize_handle("alice") == "alice.bsky.social"
+
+    def test_full_handle_unchanged(self):
+        assert self.normalize_handle("alice.bsky.social") == "alice.bsky.social"
+
+    def test_custom_domain_unchanged(self):
+        assert self.normalize_handle("alice.custom.domain") == "alice.custom.domain"
+
+    def test_did_plc_unchanged(self):
+        assert self.normalize_handle("did:plc:xyz") == "did:plc:xyz"
+
+    def test_https_url_unchanged(self):
+        assert self.normalize_handle("https://bsky.social") == "https://bsky.social"
+
+    def test_empty_string_unchanged(self):
+        assert self.normalize_handle("") == ""
+
+    def test_trailing_dot_unchanged(self):
+        # Has a dot, so no suffix appended
+        assert self.normalize_handle("alice.") == "alice."
+
+
+# --- normalize_handle integration tests ---
+
+
+class TestLoginNormalizeHandle:
+    """Integration tests: POST /auth/login triggers normalize_handle."""
+
+    def test_bare_handle_resolves_with_bsky_social(self, client):
+        """POST with bare 'alice' should resolve as 'alice.bsky.social'."""
+        with patch("app.auth_server.resolve_identity") as mock_resolve:
+            mock_resolve.side_effect = Exception("stop after resolve")
+            client.post("/auth/login", data={"username": "alice"})
+            mock_resolve.assert_called_once_with("alice.bsky.social")
+
+    def test_at_bare_handle_resolves_with_bsky_social(self, client):
+        """POST with '@alice' should resolve as 'alice.bsky.social'."""
+        with patch("app.auth_server.resolve_identity") as mock_resolve:
+            mock_resolve.side_effect = Exception("stop after resolve")
+            client.post("/auth/login", data={"username": "@alice"})
+            mock_resolve.assert_called_once_with("alice.bsky.social")
