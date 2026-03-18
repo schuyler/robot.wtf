@@ -68,7 +68,7 @@ import jwt as pyjwt
 
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthError
-from app.db import get_connection, init_schema
+from app.db import get_connection, init_schema, migrate_drop_username
 from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
@@ -176,6 +176,13 @@ def create_app(
         os.environ["SIGNING_KEY_PATH"] = signing_key_path
     if db_path:
         os.environ["ROBOT_DB_PATH"] = db_path
+
+    # Run idempotent migrations at startup
+    conn = get_connection()
+    try:
+        migrate_drop_username(conn)
+    finally:
+        conn.close()
 
     # Rate limiting — set up before routes are defined
     from flask_limiter import Limiter
