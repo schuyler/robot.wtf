@@ -160,6 +160,11 @@ class UserModel:
 
         return self.update(did, username=username)
 
+    def count(self) -> int:
+        """Return the total number of users."""
+        row = self._conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        return row[0] if row else 0
+
     def delete(self, did: str) -> None:
         """Delete a user by DID."""
         self._conn.execute("DELETE FROM users WHERE did = ?", (did,))
