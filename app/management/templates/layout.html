@@ -26,6 +26,18 @@
       font-size: 0.875rem;
     }
     .dark-mode pre.code-block { background: rgba(255,255,255,0.05); }
+    .mgmt-footer {
+      padding: 2rem 0 1rem;
+      border-top: 1px solid rgba(0,0,0,0.1);
+      text-align: center;
+      font-size: 0.8rem;
+      color: #767676;
+      margin-top: 3rem;
+    }
+    .mgmt-footer a { color: #555; text-decoration: none; }
+    .mgmt-footer a:hover { text-decoration: underline; }
+    .dark-mode .mgmt-footer { border-top-color: rgba(255,255,255,0.1); color: #aaa; }
+    .dark-mode .mgmt-footer a { color: #bbb; }
   </style>
   {% block head %}{% endblock %}
 </head>
@@ -108,6 +120,9 @@
         {% block content %}{% endblock %}
       </div>
     </div>
+    <footer class="mgmt-footer">
+      <p>Designed with love by <a href="https://bsky.app/profile/schuyler.info" target="_blank" rel="noopener">@schuyler.info</a> and built with <a href="https://bsky.app/profile/robot.wtf" target="_blank" rel="noopener">@robot.wtf</a></p>
+    </footer>
   </div>
 
 </div>
