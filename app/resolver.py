@@ -66,6 +66,7 @@ MAX_PLATFORM_STATIC_SIZE = 1024 * 1024  # 1 MB
 def _init_wiki_db(
     db_path: str,
     site_name: str = None,
+    site_description: str = None,
     is_public: bool = True,
     owner_handle: str = None,
     owner_name: str = None,
@@ -82,6 +83,7 @@ def _init_wiki_db(
     Args:
         db_path: Path to the per-wiki SQLite file.
         site_name: Optional SITE_NAME preference to seed.
+        site_description: Optional SITE_DESCRIPTION preference to seed.
         is_public: Unused. Kept for call-site compatibility. Access defaults
             are now always seeded as APPROVED via the comprehensive seed list.
         owner_handle: If provided, seeds the owner into the per-wiki user
@@ -171,6 +173,12 @@ def _init_wiki_db(
             conn.execute(
                 "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
                 ("SITE_NAME", site_name),
+            )
+
+        if site_description:
+            conn.execute(
+                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
+                ("SITE_DESCRIPTION", site_description),
             )
 
         # Seed wiki owner into the per-wiki user table so the owner has admin

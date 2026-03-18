@@ -144,6 +144,20 @@ def test_init_wiki_db_preserves_existing_site_name(db_path):
     assert value == "Original Name"
 
 
+def test_init_wiki_db_seeds_site_description(tmp_path):
+    db_path = str(tmp_path / "wiki.db")
+    _init_wiki_db(db_path, site_description="Test wiki description")
+    assert _get_preference(db_path, "SITE_DESCRIPTION") == "Test wiki description"
+
+
+def test_init_wiki_db_preserves_existing_site_description(tmp_path):
+    db_path = str(tmp_path / "wiki.db")
+    _init_wiki_db(db_path, site_description="Original description")
+    _initialized_dbs.discard(db_path)
+    _init_wiki_db(db_path, site_description="New description")
+    assert _get_preference(db_path, "SITE_DESCRIPTION") == "Original description"
+
+
 def test_init_wiki_db_caching(db_path):
     assert db_path not in _initialized_dbs
     _init_wiki_db(db_path)

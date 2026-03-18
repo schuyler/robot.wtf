@@ -345,7 +345,7 @@ def _create_flask_app() -> Flask:
         db_path = os.path.join(wiki_dir, "wiki.db")
         owner_handle = user.handle.split(".")[0] if user.handle else None
         try:
-            _init_wiki_db(db_path, site_name=display_name, owner_handle=owner_handle)
+            _init_wiki_db(db_path, site_name=display_name, site_description=purpose or None, owner_handle=owner_handle)
         except Exception:
             logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 

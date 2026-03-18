@@ -334,7 +334,7 @@ class ManagementMiddleware:
         full_handle = user.handle if user.handle else None
         owner_name = user.handle.split(".")[0] if user.handle else None
         try:
-            _init_wiki_db(db_path, site_name=display_name, owner_handle=full_handle, owner_name=owner_name)
+            _init_wiki_db(db_path, site_name=display_name, site_description=wiki_purpose or None, owner_handle=full_handle, owner_name=owner_name)
         except Exception:
             logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 
