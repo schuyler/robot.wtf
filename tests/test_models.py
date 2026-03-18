@@ -23,7 +23,7 @@ class TestUserModel:
         assert user["did"] == "did:plc:test1"
         assert user["handle"] == "bob.bsky.social"
         assert user["display_name"] == "Bob"
-        assert user["username"] is None
+        assert "username" not in user
         assert user["wiki_count"] == 0
         assert user["created_at"] is not None
 
@@ -31,24 +31,14 @@ class TestUserModel:
         assert fetched is not None
         assert fetched["did"] == "did:plc:test1"
 
-    def test_create_without_username_succeeds(self, user_model):
-        """Creating a user without username should succeed (nullable)."""
+    def test_create_user_succeeds(self, user_model):
+        """Creating a user should succeed without username."""
         user = user_model.create(
             did="did:plc:nouser1",
             handle="nouser.bsky.social",
             display_name="No User",
         )
-        assert user["username"] is None
-
-    def test_create_with_username(self, user_model):
-        """Creating a user with username should still work."""
-        user = user_model.create(
-            did="did:plc:withuser1",
-            handle="withuser.bsky.social",
-            display_name="With User",
-            username="withuser",
-        )
-        assert user["username"] == "withuser"
+        assert user["did"] == "did:plc:nouser1"
 
     def test_get_not_found(self, user_model):
         assert user_model.get("did:plc:nonexistent") is None
@@ -81,30 +71,13 @@ class TestUserModel:
         user_model.delete("did:plc:u3")
         assert user_model.get("did:plc:u3") is None
 
-    def test_unique_username_constraint(self, db, user_model):
-        """Two users with the same non-NULL username should fail."""
-        user_model.create(
-            did="did:plc:u4",
-            handle="frank.bsky.social",
-            display_name="Frank",
-            username="frank",
-        )
-        with pytest.raises(sqlite3.IntegrityError):
-            user_model.create(
-                did="did:plc:u5",
-                handle="frank2.bsky.social",
-                display_name="Frank2",
-                username="frank",
-            )
-
-    def test_null_username_not_unique_constraint(self, db, user_model):
-        """Two users with NULL username should NOT conflict (nullable unique)."""
+    def test_multiple_users_no_conflict(self, db, user_model):
+        """Two users should not conflict with each other."""
         user_model.create(
             did="did:plc:null1",
             handle="null1.bsky.social",
             display_name="Null1",
         )
-        # This should not raise
         user_model.create(
             did="did:plc:null2",
             handle="null2.bsky.social",

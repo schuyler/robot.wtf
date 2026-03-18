@@ -9,8 +9,6 @@ Routes:
 - POST /auth/login — initiate OAuth flow
 - GET  /auth/callback — OAuth callback -> platform JWT cookie
 - GET  /auth/logout — clear cookie
-- GET  /auth/signup — username form (first-time users)
-- POST /auth/signup — create user record
 - GET  /auth/oauth/consent — MCP OAuth consent page
 - POST /auth/oauth/consent — approve/deny MCP OAuth consent
 - GET  /.well-known/oauth-authorization-server — AS metadata stub
@@ -395,6 +393,7 @@ def create_app(
         return redirect(f"{auth_url}?{qparam}")
 
     @app.route("/auth/callback")
+    @limiter.limit("5/minute")
     def oauth_callback():
         """OAuth callback — exchange code for tokens, issue platform JWT cookie."""
         if error := request.args.get("error"):
@@ -490,7 +489,7 @@ def create_app(
                     handle=handle,
                     display_name=display_name,
                 )
-            except Exception:
+            except sqlite3.IntegrityError:
                 # Race condition: double-callback for same DID — use INSERT OR IGNORE fallback
                 db.execute(
                     """INSERT OR IGNORE INTO users

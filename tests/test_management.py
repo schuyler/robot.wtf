@@ -1,7 +1,7 @@
 """Integration tests for the Management API lifecycle.
 
 Tests the full wiki lifecycle:
-  create user -> set username -> create wiki -> list/get wiki
+  create user -> create wiki -> list/get wiki
   -> regenerate token -> grant/revoke ACL -> delete wiki
 
 Uses in-memory SQLite and temp directories for git repos.

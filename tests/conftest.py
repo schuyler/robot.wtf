@@ -68,7 +68,7 @@ def wiki_model(db):
 
 @pytest.fixture
 def sample_user(user_model):
-    """Create and return a sample user (no username — nullable)."""
+    """Create and return a sample user."""
     return user_model.create(
         did="did:plc:abc123",
         handle="alice.bsky.social",

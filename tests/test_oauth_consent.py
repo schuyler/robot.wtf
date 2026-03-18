@@ -238,9 +238,9 @@ class TestConsentGet:
         conn.execute("PRAGMA foreign_keys=ON")
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT OR IGNORE INTO users (did, handle, display_name, username, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            ("did:plc:test123", "alice.bsky.social", "Alice", "alice", now),
+            "INSERT OR IGNORE INTO users (did, handle, display_name, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("did:plc:test123", "alice.bsky.social", "Alice", now),
         )
         conn.execute(
             "INSERT INTO wikis (slug, owner_did, display_name, repo_path,"
@@ -513,9 +513,9 @@ class TestReturnToOpenRedirect:
         conn.row_factory = sqlite3.Row
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT INTO users (did, handle, display_name, username, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            ("did:plc:redirecttest", "alice.bsky.social", "Alice", "alicerd", now),
+            "INSERT INTO users (did, handle, display_name, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("did:plc:redirecttest", "alice.bsky.social", "Alice", now),
         )
         dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
         conn.execute(
@@ -572,8 +572,8 @@ class TestReturnToFlow:
         conn.row_factory = sqlite3.Row
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT INTO users (did, handle, display_name, username, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("did:plc:returntest", "alice.bsky.social", "Alice", "aliceret", now),
+            "INSERT INTO users (did, handle, display_name, created_at) VALUES (?, ?, ?, ?)",
+            ("did:plc:returntest", "alice.bsky.social", "Alice", now),
         )
         dpop_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
         conn.execute(
@@ -628,9 +628,9 @@ class TestConsentWikiMembership:
         conn.execute("PRAGMA foreign_keys=ON")
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT OR IGNORE INTO users (did, handle, display_name, username, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (did, "alice.bsky.social", "Alice", "alice", now),
+            "INSERT OR IGNORE INTO users (did, handle, display_name, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (did, "alice.bsky.social", "Alice", now),
         )
         conn.commit()
         conn.close()
@@ -641,9 +641,9 @@ class TestConsentWikiMembership:
         conn.execute("PRAGMA foreign_keys=ON")
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT OR IGNORE INTO users (did, handle, display_name, username, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (owner_did, "owner.bsky.social", "Owner", "owner", now),
+            "INSERT OR IGNORE INTO users (did, handle, display_name, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (owner_did, "owner.bsky.social", "Owner", now),
         )
         conn.execute(
             "INSERT INTO wikis (slug, owner_did, display_name, repo_path,"

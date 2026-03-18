@@ -448,7 +448,6 @@ class TestOAuthCallback:
         conn.close()
         assert row is not None
         assert row["handle"] == "newuser.bsky.social"
-        assert row["username"] is None
 
 
 

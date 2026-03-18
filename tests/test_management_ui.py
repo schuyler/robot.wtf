@@ -255,7 +255,7 @@ class TestWikiCreate:
         assert 'name="slug"' in html
 
     def test_create_form_default_slug(self, client, owner_token, owner_user):
-        """Default slug should be derived from handle when username is absent."""
+        """Default slug should be derived from handle."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
         resp = client.get("/app/create")
         html = resp.data.decode()
@@ -336,7 +336,7 @@ class TestWikiCreate:
     def test_create_form_default_slug_from_handle(
         self, client, platform_jwt, user_model
     ):
-        """User without username gets handle-derived slug default."""
+        """User gets handle-derived slug default."""
         user_model.create(
             did="did:plc:nouser",
             handle="nouser.bsky.social",
@@ -375,10 +375,10 @@ class TestWikiCreate:
         assert 'value=""' in html
 
     @patch("app.api_server._init_wiki_repo")
-    def test_create_wiki_with_null_username_derives_slug_from_handle(
+    def test_create_wiki_derives_slug_from_handle(
         self, mock_init, client, platform_jwt, user_model, wiki_model
     ):
-        """Wiki creation with null-username user derives default slug from handle."""
+        """Wiki creation derives default slug from handle."""
         user_model.create(
             did="did:plc:slughook",
             handle="slughook.bsky.social",

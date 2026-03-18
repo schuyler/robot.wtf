@@ -67,15 +67,14 @@ class UserModel:
         handle: str,
         display_name: str | None = None,
         avatar_url: str | None = None,
-        username: str | None = None,
     ) -> dict[str, Any]:
         """Create a new user. Returns the user dict."""
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """INSERT INTO users (did, handle, display_name, avatar_url,
-               username, created_at, wiki_count)
-               VALUES (?, ?, ?, ?, ?, ?, 0)""",
-            (did, handle, display_name, avatar_url, username, now),
+               created_at, wiki_count)
+               VALUES (?, ?, ?, ?, ?, 0)""",
+            (did, handle, display_name, avatar_url, now),
         )
         self._conn.commit()
         return self.get(did)  # type: ignore[return-value]

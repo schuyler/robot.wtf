@@ -143,7 +143,6 @@ class TestAuthMiddleware:
             did="did:plc:mw1",
             handle="mw.bsky.social",
             display_name="MW User",
-            username="mwuser",
         )
         token = platform_jwt.create_token(
             user_did="did:plc:mw1",
