@@ -4,7 +4,7 @@ Your wiki is **private by default** — only you can access it until you invite 
 
 ## The admin panel
 
-Go to **Settings** (gear icon) → **Admin** to open the admin panel, or navigate directly to `/-/admin` on your wiki.
+Click the **gear icon** in the navigation bar to open Settings. Admin sections appear in the sidebar — or navigate directly to `/-/admin` on your wiki.
 
 ## Permissions
 
@@ -21,7 +21,6 @@ Each can be set to:
 | **Anonymous** | Anyone on the internet |
 | **Registered** | Only users who have logged in (the default) |
 | **Approved** | Only users you've explicitly approved |
-| **Admin** | Only admins |
 
 By default, all three are set to **Registered** — your wiki is private. Change these under **Permissions and Registration** in the admin panel.
 
@@ -39,7 +38,7 @@ Manage roles under **User Management** in the admin panel.
 
 Customize the sidebar under **Sidebar Preferences**:
 
-- Add shortcuts to frequently-used pages
+- Toggle built-in shortcuts (Home, A–Z index, Changelog, Create Page)
 - Create a custom menu with links (internal pages or external URLs)
 - Configure the page index (display mode, depth, focus)
 
@@ -50,5 +49,3 @@ The admin panel also lets you:
 - Set a **site name**, **description**, **logo**, and **favicon**
 - Choose a **custom home page** (any wiki page, or the page index)
 - Configure **commit message** behavior for edits
-- Enable **Git web server** for clone/pull access (experimental)
-- Set up **push/pull to a remote Git repo** for backup or sync (experimental)
