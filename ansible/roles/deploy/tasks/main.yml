@@ -49,19 +49,19 @@
 
 - name: Install otterwiki-api plugin
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki-api --force-reinstall 'git+https://github.com/schuyler/otterwiki-api.git'
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall 'git+https://github.com/schuyler/otterwiki-api.git'
   changed_when: true
   notify: restart robot services
 
 - name: Install otterwiki-semantic-search plugin
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki-semantic-search --force-reinstall 'git+https://github.com/schuyler/otterwiki-semantic-search.git'
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall 'git+https://github.com/schuyler/otterwiki-semantic-search.git'
   changed_when: true
   notify: restart robot services
 
 - name: Install otterwiki-mcp plugin
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki-mcp --force-reinstall 'git+https://github.com/schuyler/otterwiki-mcp.git'
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall 'git+https://github.com/schuyler/otterwiki-mcp.git'
   changed_when: true
   notify: restart robot services
 
