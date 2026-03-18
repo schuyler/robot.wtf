@@ -60,6 +60,8 @@ PLATFORM_STATIC_DIR = os.environ.get("PLATFORM_STATIC_DIR", "/srv/static")
 
 _SCHEMA_VERSION = "3"
 
+MAX_PLATFORM_STATIC_SIZE = 1024 * 1024  # 1 MB
+
 
 def _init_wiki_db(
     db_path: str,
@@ -204,7 +206,7 @@ def _init_wiki_db(
                         (new_value, pref_name),
                     )
             conn.execute(
-                "UPDATE preferences SET value = ? WHERE name = '_schema_version'",
+                "INSERT OR REPLACE INTO preferences (name, value) VALUES ('_schema_version', ?)",
                 (_SCHEMA_VERSION,),
             )
             conn.commit()
@@ -528,14 +530,24 @@ def _serve_platform_static(environ, start_response):
     if not filename:
         return _error_response(start_response, 404, "Not Found")
 
-    static_dir = os.path.realpath(PLATFORM_STATIC_DIR)
-    file_path = os.path.realpath(os.path.join(static_dir, filename))
+    try:
+        static_dir = os.path.realpath(PLATFORM_STATIC_DIR)
+        file_path = os.path.realpath(os.path.join(static_dir, filename))
+    except ValueError:
+        return _error_response(start_response, 400, "Bad Request")
 
     if not file_path.startswith(static_dir + os.sep):
         return _error_response(start_response, 403, "Forbidden")
 
     if not os.path.isfile(file_path):
         return _error_response(start_response, 404, "Not Found")
+
+    try:
+        file_size = os.path.getsize(file_path)
+    except OSError:
+        return _error_response(start_response, 404, "Not Found")
+    if file_size > MAX_PLATFORM_STATIC_SIZE:
+        return _error_response(start_response, 403, "Forbidden")
 
     content_type, _ = mimetypes.guess_type(file_path)
     if content_type is None:
