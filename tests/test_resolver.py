@@ -655,12 +655,12 @@ class TestPrivateWikiMigration:
     gating mechanism would silently make private wikis public when no
     READ_ACCESS preference was set in wiki.db (defaulting to ANONYMOUS).
 
-    The fix: _init_wiki_db seeds READ_ACCESS=REGISTERED when is_public=False
+    The fix: _init_wiki_db seeds READ_ACCESS=APPROVED when is_public=False
     and no READ_ACCESS preference exists yet.
     """
 
     def test_init_wiki_db_seeds_read_access_for_private_wiki(self, tmp_path):
-        """_init_wiki_db with is_public=False seeds READ_ACCESS=REGISTERED."""
+        """_init_wiki_db with is_public=False seeds READ_ACCESS=APPROVED."""
         import sqlite3
         from app.resolver import _init_wiki_db
 
@@ -674,8 +674,8 @@ class TestPrivateWikiMigration:
         conn.close()
 
         assert row is not None, "READ_ACCESS preference was not seeded"
-        assert row[0] == "REGISTERED", (
-            f"Expected READ_ACCESS=REGISTERED, got {row[0]!r}"
+        assert row[0] == "APPROVED", (
+            f"Expected READ_ACCESS=APPROVED, got {row[0]!r}"
         )
 
     def test_init_wiki_db_does_not_override_existing_read_access(self, tmp_path):
@@ -712,11 +712,11 @@ class TestPrivateWikiMigration:
             "Existing READ_ACCESS should not be overwritten by migration"
         )
 
-    def test_init_wiki_db_public_wiki_seeds_read_access_registered(self, tmp_path):
-        """_init_wiki_db always seeds READ_ACCESS=REGISTERED regardless of is_public.
+    def test_init_wiki_db_always_seeds_read_access_approved(self, tmp_path):
+        """_init_wiki_db always seeds READ_ACCESS=APPROVED regardless of is_public.
 
         Phase 2 Unit 5: comprehensive seeding means all platform wikis get
-        REGISTERED as the secure default. The is_public flag is no longer used
+        APPROVED as the secure default. The is_public flag is no longer used
         to conditionally seed READ_ACCESS; access control is handled at the
         resolver level, not at DB init time.
         """
@@ -733,15 +733,15 @@ class TestPrivateWikiMigration:
         conn.close()
 
         assert row is not None, "READ_ACCESS should always be seeded"
-        assert row[0] == "REGISTERED", (
-            "Expected READ_ACCESS=REGISTERED (secure default), got %r" % row[0]
+        assert row[0] == "APPROVED", (
+            "Expected READ_ACCESS=APPROVED (secure default), got %r" % row[0]
         )
 
     def test_anonymous_user_denied_when_is_public_false_no_read_access_set(self):
         """End-to-end: wiki with is_public=0, no READ_ACCESS set -> anonymous denied.
 
         Simulates what happens on first request to an existing private wiki
-        after the is_public removal. The resolver seeds READ_ACCESS=REGISTERED
+        after the is_public removal. The resolver seeds READ_ACCESS=APPROVED
         via _init_wiki_db, which causes _apply_wiki_access_restrictions to
         strip READ from anonymous users, resulting in a 403/redirect.
         """
@@ -797,12 +797,12 @@ class TestPrivateWikiMigration:
             # let _swap_database and _init_wiki_db run so they seed READ_ACCESS.
             # Then patch _get_wiki_access_config to read from the seeded DB.
             with patch.object(resolver, "_swap_storage"):
-                # _swap_database will call _init_wiki_db which seeds READ_ACCESS=REGISTERED
+                # _swap_database will call _init_wiki_db which seeds READ_ACCESS=APPROVED
                 # into the wiki.db. Then _get_wiki_access_config reads from app.config
                 # (loaded by update_app_config). Since otterwiki is not installed, we
                 # patch _get_wiki_access_config to return what the seeded DB would produce.
                 seeded_config = {
-                    "READ_ACCESS": "REGISTERED",
+                    "READ_ACCESS": "APPROVED",
                     "WRITE_ACCESS": "ANONYMOUS",
                     "ATTACHMENT_ACCESS": "ANONYMOUS",
                 }
