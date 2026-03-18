@@ -256,10 +256,7 @@ def _create_flask_app() -> Flask:
         if wikis:
             return redirect(url_for("wiki_settings", slug=wikis[0]["slug"]))
 
-        return render_template(
-            "dashboard.html",
-            user=user,
-        )
+        return redirect(url_for("wiki_create"))
 
     @app.route("/app/create", methods=["GET", "POST"])
     @limiter.limit("1/minute", methods=["POST"])

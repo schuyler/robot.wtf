@@ -200,12 +200,11 @@ class TestAuthGating:
 
 class TestDashboard:
     def test_dashboard_empty(self, client, owner_token, owner_user):
-        """Dashboard with no wikis shows create CTA."""
+        """Dashboard with no wikis redirects to /app/create."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
-        resp = client.get("/app/")
-        assert resp.status_code == 200
-        html = resp.data.decode()
-        assert "Create your first wiki" in html
+        resp = client.get("/app/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/app/create" in resp.headers["Location"]
 
     def test_dashboard_with_wiki_redirects(
         self, client, owner_token, owner_user, wiki_model
