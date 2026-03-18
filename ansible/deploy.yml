@@ -6,6 +6,8 @@
   roles:
     - database
     - deploy
+    - healthcheck
+    - diskmon
 
   post_tasks:
     - name: Copy smoke test script

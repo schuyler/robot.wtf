@@ -91,6 +91,13 @@
         <span class="sidebar-icon"><i class="fas fa-user"></i></span>
         Account
       </a>
+      {% if is_platform_admin %}
+      <a href="/app/admin/stats"
+         class="sidebar-link sidebar-link-with-icon {% if request.path == '/app/admin/stats' %}active{% endif %}">
+        <span class="sidebar-icon"><i class="fas fa-chart-bar"></i></span>
+        System status
+      </a>
+      {% endif %}
     </div>
   </div>
 
