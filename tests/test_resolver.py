@@ -1757,3 +1757,114 @@ class TestResolverRateLimiting:
         assert status == "413 Request Entity Too Large", (
             f"Quota check should take priority over rate limit; got {status}"
         )
+
+
+class TestPlatformStatic:
+    """Tests for the /platform/ static file serving route."""
+
+    def _make_resolver(self):
+        from app.resolver import TenantResolver
+        from app.auth.middleware import AuthMiddleware
+
+        def stub_app(environ, start_response):
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [b"ok"]
+
+        auth_middleware = MagicMock(spec=AuthMiddleware)
+        wiki_model = MagicMock()
+        user_model = MagicMock()
+
+        return TenantResolver(
+            stub_app,
+            auth_middleware=auth_middleware,
+            wiki_model=wiki_model,
+            user_model=user_model,
+        )
+
+    def _run(self, resolver, environ):
+        """Run the resolver and capture response status + headers + body."""
+        start_response, calls = _capture_response()
+        body = resolver(environ, start_response)
+        return calls, body
+
+    def test_serves_existing_file(self, tmp_path, monkeypatch):
+        """A file that exists in PLATFORM_STATIC_DIR is served with 200."""
+        import app.resolver as resolver_module
+
+        svg_content = b"<svg>test</svg>"
+        svg_file = tmp_path / "test.svg"
+        svg_file.write_bytes(svg_content)
+
+        monkeypatch.setattr(resolver_module, "PLATFORM_STATIC_DIR", str(tmp_path))
+
+        resolver = self._make_resolver()
+        environ = _make_environ("robot.wtf", path="/platform/test.svg")
+        calls, body = self._run(resolver, environ)
+
+        assert calls, "No response captured"
+        status, headers = calls[0]
+        assert status == "200 OK"
+        headers_dict = dict(headers)
+        assert "image/svg+xml" in headers_dict.get("Content-Type", "")
+        assert b"".join(body) == svg_content
+
+    def test_404_for_missing_file(self, tmp_path, monkeypatch):
+        """A request for a nonexistent file returns 404."""
+        import app.resolver as resolver_module
+
+        monkeypatch.setattr(resolver_module, "PLATFORM_STATIC_DIR", str(tmp_path))
+
+        resolver = self._make_resolver()
+        environ = _make_environ("robot.wtf", path="/platform/nonexistent.svg")
+        calls, _ = self._run(resolver, environ)
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "404 Not Found"
+
+    def test_403_for_traversal(self, tmp_path, monkeypatch):
+        """A path traversal attempt returns 403."""
+        import app.resolver as resolver_module
+
+        monkeypatch.setattr(resolver_module, "PLATFORM_STATIC_DIR", str(tmp_path))
+
+        resolver = self._make_resolver()
+        environ = _make_environ("robot.wtf", path="/platform/../etc/passwd")
+        calls, _ = self._run(resolver, environ)
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "403 Forbidden"
+
+    def test_empty_path_returns_404(self, tmp_path, monkeypatch):
+        """A request for /platform/ (no filename) returns 404."""
+        import app.resolver as resolver_module
+
+        monkeypatch.setattr(resolver_module, "PLATFORM_STATIC_DIR", str(tmp_path))
+
+        resolver = self._make_resolver()
+        environ = _make_environ("robot.wtf", path="/platform/")
+        calls, _ = self._run(resolver, environ)
+
+        assert calls, "No response captured"
+        status, _ = calls[0]
+        assert status == "404 Not Found"
+
+    def test_cache_control_header(self, tmp_path, monkeypatch):
+        """Served files include Cache-Control: public, max-age=86400."""
+        import app.resolver as resolver_module
+
+        svg_file = tmp_path / "logo.svg"
+        svg_file.write_bytes(b"<svg/>")
+
+        monkeypatch.setattr(resolver_module, "PLATFORM_STATIC_DIR", str(tmp_path))
+
+        resolver = self._make_resolver()
+        environ = _make_environ("robot.wtf", path="/platform/logo.svg")
+        calls, _ = self._run(resolver, environ)
+
+        assert calls, "No response captured"
+        status, headers = calls[0]
+        assert status == "200 OK"
+        headers_dict = dict(headers)
+        assert headers_dict.get("Cache-Control") == "public, max-age=86400"

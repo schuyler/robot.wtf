@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import subprocess
 from typing import Any, Callable
@@ -54,8 +55,10 @@ PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
 # Base path for wiki data
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
 
+# Directory for platform-level static files served at /platform/
+PLATFORM_STATIC_DIR = os.environ.get("PLATFORM_STATIC_DIR", "/srv/static")
 
-_SCHEMA_VERSION = "2"
+_SCHEMA_VERSION = "3"
 
 
 def _init_wiki_db(
@@ -152,8 +155,8 @@ def _init_wiki_db(
             ("_schema_version", _SCHEMA_VERSION),
             # Platform branding: default site icon and logo. Users can
             # override per-wiki via the admin UI.
-            ("SITE_ICON", f"https://{PLATFORM_DOMAIN}/static/robot.wtf.svg"),
-            ("SITE_LOGO", f"https://{PLATFORM_DOMAIN}/static/robot.wtf.svg"),
+            ("SITE_ICON", "/platform/robot.wtf.svg"),
+            ("SITE_LOGO", "/platform/robot.wtf.svg"),
         ]
         for name, value in platform_preferences:
             conn.execute(
@@ -181,6 +184,30 @@ def _init_wiki_db(
                 (seed_name, f"@{owner_handle}"),
             )
         conn.commit()
+
+        # --- Migrations ---
+        row = conn.execute(
+            "SELECT value FROM preferences WHERE name = '_schema_version'"
+        ).fetchone()
+        current_version = int(row[0]) if row and row[0] else 0
+
+        if current_version < 3:
+            old_prefix = f"https://{PLATFORM_DOMAIN}/static/"
+            for pref_name in ("SITE_ICON", "SITE_LOGO"):
+                pref_row = conn.execute(
+                    "SELECT value FROM preferences WHERE name = ?", (pref_name,)
+                ).fetchone()
+                if pref_row and pref_row[0] and pref_row[0].startswith(old_prefix):
+                    new_value = "/platform/" + pref_row[0][len(old_prefix):]
+                    conn.execute(
+                        "UPDATE preferences SET value = ? WHERE name = ?",
+                        (new_value, pref_name),
+                    )
+            conn.execute(
+                "UPDATE preferences SET value = ? WHERE name = '_schema_version'",
+                (_SCHEMA_VERSION,),
+            )
+            conn.commit()
     finally:
         conn.close()
 
@@ -487,6 +514,44 @@ def _error_response(
     return [body.encode("utf-8")]
 
 
+def _serve_platform_static(environ, start_response):
+    """Serve a file from PLATFORM_STATIC_DIR for /platform/ requests.
+
+    Returns a WSGI response iterable if the path matches /platform/, or None
+    to signal that the caller should continue normal request processing.
+    """
+    path_info = environ.get("PATH_INFO", "")
+    if not path_info.startswith("/platform/"):
+        return None
+
+    filename = path_info[len("/platform/"):]
+    if not filename:
+        return _error_response(start_response, 404, "Not Found")
+
+    static_dir = os.path.realpath(PLATFORM_STATIC_DIR)
+    file_path = os.path.realpath(os.path.join(static_dir, filename))
+
+    if not file_path.startswith(static_dir + os.sep):
+        return _error_response(start_response, 403, "Forbidden")
+
+    if not os.path.isfile(file_path):
+        return _error_response(start_response, 404, "Not Found")
+
+    content_type, _ = mimetypes.guess_type(file_path)
+    if content_type is None:
+        content_type = "application/octet-stream"
+
+    with open(file_path, "rb") as f:
+        data = f.read()
+
+    start_response("200 OK", [
+        ("Content-Type", content_type),
+        ("Content-Length", str(len(data))),
+        ("Cache-Control", "public, max-age=86400"),
+    ])
+    return [data]
+
+
 def _is_browser_request(environ: dict[str, Any]) -> bool:
     """Return True if the client accepts HTML (i.e. is a browser)."""
     accept = environ.get("HTTP_ACCEPT", "")
@@ -549,6 +614,10 @@ class TenantResolver:
     def __call__(
         self, environ: dict[str, Any], start_response: Callable
     ) -> Any:
+        result = _serve_platform_static(environ, start_response)
+        if result is not None:
+            return result
+
         host = environ.get("HTTP_HOST", "")
         wiki_slug = _parse_host(host)
 

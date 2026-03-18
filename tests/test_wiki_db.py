@@ -282,3 +282,104 @@ def test_init_owner_name_none_fallback(db_path):
     user = _get_user(db_path, "@alice.bsky.social")
     assert user is not None
     assert user["name"] == "alice"
+
+
+# --- Schema v3 migration tests ---
+
+
+def test_init_seeds_relative_site_icon(db_path):
+    """SITE_ICON seeded on a new DB should be a relative /platform/ URL."""
+    _init_wiki_db(db_path)
+    icon = _get_preference(db_path, "SITE_ICON")
+    logo = _get_preference(db_path, "SITE_LOGO")
+    assert icon == "/platform/robot.wtf.svg"
+    assert logo == "/platform/robot.wtf.svg"
+
+
+def test_migration_v2_to_v3_updates_branding_urls(db_path):
+    """Existing v2 DB with absolute branding URLs is migrated to relative /platform/ URLs on re-init."""
+    from app.resolver import PLATFORM_DOMAIN
+
+    # Manually create a v2-style DB
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS preferences (
+                name VARCHAR(256) PRIMARY KEY,
+                value TEXT
+            );
+        """)
+        old_url = f"https://{PLATFORM_DOMAIN}/static/robot.wtf.svg"
+        rows = [
+            ("READ_ACCESS", "REGISTERED"),
+            ("WRITE_ACCESS", "REGISTERED"),
+            ("ATTACHMENT_ACCESS", "REGISTERED"),
+            ("AUTH_METHOD", "PROXY_HEADER"),
+            ("DISABLE_REGISTRATION", "True"),
+            ("AUTO_APPROVAL", "False"),
+            ("_schema_version", "2"),
+            ("SITE_ICON", old_url),
+            ("SITE_LOGO", old_url),
+        ]
+        for name, value in rows:
+            conn.execute(
+                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
+                (name, value),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Re-init should run migration
+    _init_wiki_db(db_path)
+
+    icon = _get_preference(db_path, "SITE_ICON")
+    logo = _get_preference(db_path, "SITE_LOGO")
+    assert icon == "/platform/robot.wtf.svg", f"Expected relative icon, got: {icon}"
+    assert logo == "/platform/robot.wtf.svg", f"Expected relative logo, got: {logo}"
+
+    version = _get_preference(db_path, "_schema_version")
+    assert version == _SCHEMA_VERSION
+
+
+def test_migration_preserves_custom_branding(db_path):
+    """v2 DB with a custom branding URL that doesn't match the old prefix is left unchanged."""
+    # Manually create a v2-style DB with custom icon
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS preferences (
+                name VARCHAR(256) PRIMARY KEY,
+                value TEXT
+            );
+        """)
+        rows = [
+            ("READ_ACCESS", "REGISTERED"),
+            ("WRITE_ACCESS", "REGISTERED"),
+            ("ATTACHMENT_ACCESS", "REGISTERED"),
+            ("AUTH_METHOD", "PROXY_HEADER"),
+            ("DISABLE_REGISTRATION", "True"),
+            ("AUTO_APPROVAL", "False"),
+            ("_schema_version", "2"),
+            ("SITE_ICON", "https://example.com/custom-icon.png"),
+            ("SITE_LOGO", "https://example.com/custom-logo.png"),
+        ]
+        for name, value in rows:
+            conn.execute(
+                "INSERT OR IGNORE INTO preferences (name, value) VALUES (?, ?)",
+                (name, value),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Re-init should migrate schema version but NOT change custom icons
+    _init_wiki_db(db_path)
+
+    icon = _get_preference(db_path, "SITE_ICON")
+    logo = _get_preference(db_path, "SITE_LOGO")
+    assert icon == "https://example.com/custom-icon.png", f"Custom icon should be preserved: {icon}"
+    assert logo == "https://example.com/custom-logo.png", f"Custom logo should be preserved: {logo}"
+
+    version = _get_preference(db_path, "_schema_version")
+    assert version == _SCHEMA_VERSION
