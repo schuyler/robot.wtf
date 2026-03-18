@@ -279,6 +279,7 @@ class ManagementMiddleware:
         slug = body.get("slug", "").strip().lower()
         display_name = body.get("display_name", "").strip()
         wiki_purpose = body.get("purpose", "").strip()
+        wiki_purpose = wiki_purpose[:200] if wiki_purpose else wiki_purpose
 
         if not display_name:
             return 400, {"error": "display_name is required"}

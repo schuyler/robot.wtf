@@ -283,6 +283,7 @@ def _create_flask_app() -> Flask:
         slug = request.form.get("slug", "").strip().lower()
         display_name = request.form.get("display_name", "").strip()
         purpose = request.form.get("purpose", "").strip()
+        purpose = purpose[:200]
 
         if not display_name:
             flash("Display name is required.", "danger")
