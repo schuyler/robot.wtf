@@ -36,7 +36,7 @@ from flask import (
 
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthMiddleware
-from app.db import get_connection
+from app.db import get_connection, migrate_drop_username
 from app.management.routes import (
     ManagementMiddleware,
     _delete_wiki_repo,
@@ -638,6 +638,13 @@ def _create_flask_app() -> Flask:
 def _build_app():
     """Build the WSGI application with ManagementMiddleware."""
     flask_app = _create_flask_app()
+
+    # Run idempotent migrations at startup
+    mig_conn = get_connection()
+    try:
+        migrate_drop_username(mig_conn)
+    finally:
+        mig_conn.close()
 
     conn = get_connection()
     user_model = UserModel(conn)
