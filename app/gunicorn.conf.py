@@ -1,6 +1,6 @@
 """Shared Gunicorn configuration for robot.wtf WSGI services.
 
-Used by: otterwiki (port 8000), platform API (port 8002), auth (port 8003).
+Used by: otterwiki (port 8000), platform (auth + management, port 8002).
 The MCP sidecar uses uvicorn instead.
 
 Usage:
