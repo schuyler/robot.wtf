@@ -123,6 +123,18 @@
     enabled: false
   failed_when: false
 
+- name: Remove stale robot-api unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/robot-api.service
+    state: absent
+  notify: reload systemd
+
+- name: Remove stale robot-auth unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/robot-auth.service
+    state: absent
+  notify: reload systemd
+
 - name: Template robot.env
   ansible.builtin.template:
     src: robot.env.j2
