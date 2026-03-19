@@ -88,7 +88,7 @@ def app(db_path, client_jwk, rsa_keys):
     os.environ["PLATFORM_DOMAIN"] = "robot.wtf"
     os.environ["FLASK_SECRET_KEY"] = "test-secret"
 
-    from app.auth_server import create_app
+    from app.platform_server import create_app
     application = create_app(
         db_path=db_path,
         client_jwk_path=jwk_path,
@@ -496,8 +496,8 @@ class TestReturnToOpenRedirect:
         with client.session_transaction() as sess:
             assert sess.get("return_to") == "/some/page"
 
-    @patch("app.auth_server.initial_token_request")
-    @patch("app.auth_server._fetch_display_name")
+    @patch("app.platform_server.initial_token_request")
+    @patch("app.platform_server._fetch_display_name")
     def test_callback_does_not_redirect_to_evil(
         self, mock_display, mock_token, app, client, db_path
     ):
@@ -555,8 +555,8 @@ class TestReturnToFlow:
         # The hidden input should be in the rendered HTML
         assert b"return_to" in resp.data
 
-    @patch("app.auth_server.initial_token_request")
-    @patch("app.auth_server._fetch_display_name")
+    @patch("app.platform_server.initial_token_request")
+    @patch("app.platform_server._fetch_display_name")
     def test_callback_uses_return_to(
         self, mock_display, mock_token, app, client, db_path
     ):

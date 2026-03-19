@@ -10,6 +10,5 @@ smtp_password: "SET_ME"
 healthcheck_services:
   robot-chromadb: 8004
   robot-otterwiki: 8000
-  robot-api: 8002
-  robot-auth: 8003
+  robot-platform: 8002
   robot-mcp: 8001

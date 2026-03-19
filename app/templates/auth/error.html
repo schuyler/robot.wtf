@@ -1,0 +1,15 @@
+{% extends 'auth/base.html' %}
+
+{% block title %}Error — robot.wtf{% endblock %}
+
+{% block content %}
+<div class="auth-card">
+  <h2>Error {{ status_code }}</h2>
+  {% if err.description %}
+  <p><code>{{ err.description }}</code></p>
+  {% else %}
+  <p>Something went wrong.</p>
+  {% endif %}
+  <p><a href="/auth/login">Start Over</a></p>
+</div>
+{% endblock %}

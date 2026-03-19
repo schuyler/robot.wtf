@@ -21,8 +21,7 @@
         state: stopped
       loop:
         - robot-otterwiki
-        - robot-api
-        - robot-auth
+        - robot-platform
         - robot-mcp
 
     - name: Create /srv/data/wikis if missing
@@ -111,6 +110,5 @@
         state: started
       loop:
         - robot-otterwiki
-        - robot-api
-        - robot-auth
+        - robot-platform
         - robot-mcp

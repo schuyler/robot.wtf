@@ -1,0 +1,22 @@
+{% extends 'auth/base.html' %}
+
+{% block title %}Login — robot.wtf{% endblock %}
+
+{% block content %}
+<div class="auth-card">
+  <h3>Login with Bluesky</h3>
+  <form method="post">
+    <p>Enter your Bluesky handle to continue</p>
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+    <div class="input-group">
+      <input name="username" id="username" placeholder="alice.bsky.social" value="{{ prefill_handle or '' }}" required>
+      <input type="submit" value="Login">
+    </div>
+  </form>
+  <form method="post">
+    <input name="username" type="hidden" value="https://bsky.social">
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+    <input class="btn-secondary" type="submit" value="Create Account with Bluesky Social">
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "management/layout.html" %}
+{% block title %}Account{% endblock %}
+
+{% block content %}
+<h2 class="mb-20">Account</h2>
+
+<!-- Account info -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">Profile</h5>
+    <table class="table table-sm mb-0">
+      <tbody>
+        <tr>
+          <th style="width: 150px;">Bluesky handle</th>
+          <td>{{ user_record.handle }}</td>
+        </tr>
+        <tr>
+          <th>DID</th>
+          <td><code class="small">{{ user_record.did }}</code></td>
+        </tr>
+        <tr>
+          <th>Member since</th>
+          <td>{{ user_record.created_at[:10] if user_record.created_at else "Unknown" }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Danger zone -->
+<details class="collapse-panel card">
+  <summary class="collapse-header text-danger">Delete account</summary>
+  <div class="collapse-content">
+    <p class="mb-15">This will delete your account and all associated wikis. This cannot be undone.</p>
+    <form method="POST" action="/app/account/delete">
+      <div class="mb-10">
+        <label>Type <strong>{{ user_record.handle }}</strong> to confirm:</label>
+        <input type="text" class="form-control mt-5" name="confirm_handle" required>
+      </div>
+      <button type="submit" class="btn btn-danger">Permanently delete my account</button>
+    </form>
+  </div>
+</details>
+{% endblock %}

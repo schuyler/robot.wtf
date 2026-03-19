@@ -1,0 +1,42 @@
+{% extends "management/layout.html" %}
+{% block title %}Create Wiki{% endblock %}
+
+{% block content %}
+<h2 class="mb-20">Create a new wiki</h2>
+
+<div class="card">
+  <div class="card-body">
+    <form method="POST" action="/app/create">
+      <div class="mb-15">
+        <label for="slug">Wiki slug</label>
+        <div class="input-group">
+          <input type="text" class="form-control" id="slug" name="slug"
+                 value="{{ default_slug }}" required
+                 pattern="[a-z0-9][a-z0-9\-]{1,28}[a-z0-9]"
+                 title="3-30 lowercase letters, digits, and hyphens. Cannot start or end with a hyphen.">
+          <div class="input-group-append">
+            <span class="input-group-text">.{{ platform_domain }}</span>
+          </div>
+        </div>
+        <small class="text-muted">3&ndash;30 characters. Lowercase letters, digits, and hyphens.</small>
+      </div>
+
+      <div class="mb-15">
+        <label for="display_name">Display name</label>
+        <input type="text" class="form-control" id="display_name" name="display_name"
+               placeholder="My Wiki" required>
+      </div>
+
+      <div class="mb-20">
+        <label for="purpose">Site description <span class="text-muted">(optional)</span></label>
+        <input type="text" class="form-control" id="purpose" name="purpose"
+               placeholder="A wiki about..." maxlength="200">
+        <small class="text-muted">Shown in the browser tab, search results, and wiki navbar.</small>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Create wiki</button>
+      <a href="/app/" class="btn btn-outline-secondary ml-10">Cancel</a>
+    </form>
+  </div>
+</div>
+{% endblock %}

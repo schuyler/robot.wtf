@@ -39,71 +39,68 @@ wait_for_service() {
 declare -A SERVICES=(
     [robot-otterwiki]=8000
     [robot-mcp]=8001
-    [robot-api]=8002
-    [robot-auth]=8003
+    [robot-platform]=8002
 )
 
-api_alive=false
-auth_alive=false
+platform_alive=false
 
-for svc in robot-otterwiki robot-mcp robot-api robot-auth; do
+for svc in robot-otterwiki robot-mcp robot-platform; do
     port="${SERVICES[$svc]}"
 
     if wait_for_service "$svc" "$port"; then
         pass "${svc} (port ${port}): active and responding"
-        [ "$svc" = "robot-api" ]  && api_alive=true
-        [ "$svc" = "robot-auth" ] && auth_alive=true
+        [ "$svc" = "robot-platform" ] && platform_alive=true
     else
         fail "${svc} (port ${port}): not responding after 30s"
     fi
 done
 
-# robot-api: expect response with "robot.wtf" in body (only if liveness passed)
-if [ "$api_alive" = true ]; then
-    api_body="$(curl -s --max-time 5 http://localhost:8002/ 2>/dev/null || true)"
-    if echo "$api_body" | grep -q "robot.wtf"; then
-        pass "robot-api body contains 'robot.wtf'"
+# robot-platform: expect response with "robot.wtf" in body (only if liveness passed)
+if [ "$platform_alive" = true ]; then
+    platform_body="$(curl -s --max-time 5 http://localhost:8002/ 2>/dev/null || true)"
+    if echo "$platform_body" | grep -q "robot.wtf"; then
+        pass "robot-platform body contains 'robot.wtf'"
     else
-        fail "robot-api body does not contain 'robot.wtf'"
+        fail "robot-platform body does not contain 'robot.wtf'"
     fi
 fi
 
-# robot-auth: expect login form content (only if liveness passed)
-if [ "$auth_alive" = true ]; then
-    auth_body="$(curl -s --max-time 5 http://localhost:8003/auth/login 2>/dev/null || true)"
+# robot-platform: expect login form content
+if [ "$platform_alive" = true ]; then
+    auth_body="$(curl -s --max-time 5 http://localhost:8002/auth/login 2>/dev/null || true)"
     if echo "$auth_body" | grep -qi "login\|<form"; then
-        pass "robot-auth /auth/login contains login form"
+        pass "robot-platform /auth/login contains login form"
     else
-        fail "robot-auth /auth/login missing expected content"
+        fail "robot-platform /auth/login missing expected content"
     fi
 fi
 
 # ---------------------------------------------------------------------------
-# B. Auth well-known endpoints (port 8003)
+# B. Auth well-known endpoints (port 8002, now served by robot-platform)
 # ---------------------------------------------------------------------------
 
 # OAuth authorization server metadata — fetch body and status in one call
 as_tmp="$(mktemp)"
 as_status="$(curl -s -o "$as_tmp" -w "%{http_code}" --max-time 5 \
-    http://localhost:8003/.well-known/oauth-authorization-server 2>/dev/null || echo "000")"
+    http://localhost:8002/.well-known/oauth-authorization-server 2>/dev/null || echo "000")"
 as_meta="$(cat "$as_tmp")"
 rm -f "$as_tmp"
 if [[ ! "$as_status" =~ ^[5] ]] && [ "$as_status" != "000" ] && echo "$as_meta" | grep -q '"issuer"'; then
-    pass "robot-auth /.well-known/oauth-authorization-server: ${as_status} with issuer"
+    pass "robot-platform /.well-known/oauth-authorization-server: ${as_status} with issuer"
 else
-    fail "robot-auth /.well-known/oauth-authorization-server: status=${as_status}, missing issuer"
+    fail "robot-platform /.well-known/oauth-authorization-server: status=${as_status}, missing issuer"
 fi
 
 # JWKS — fetch body and status in one call
 jwks_tmp="$(mktemp)"
 jwks_status="$(curl -s -o "$jwks_tmp" -w "%{http_code}" --max-time 5 \
-    http://localhost:8003/.well-known/jwks.json 2>/dev/null || echo "000")"
+    http://localhost:8002/.well-known/jwks.json 2>/dev/null || echo "000")"
 jwks_body="$(cat "$jwks_tmp")"
 rm -f "$jwks_tmp"
 if [[ ! "$jwks_status" =~ ^[5] ]] && [ "$jwks_status" != "000" ] && echo "$jwks_body" | grep -q '"keys"'; then
-    pass "robot-auth /.well-known/jwks.json: ${jwks_status} with keys"
+    pass "robot-platform /.well-known/jwks.json: ${jwks_status} with keys"
 else
-    fail "robot-auth /.well-known/jwks.json: status=${jwks_status}, missing keys"
+    fail "robot-platform /.well-known/jwks.json: status=${jwks_status}, missing keys"
 fi
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 [Unit]
-Description=robot.wtf Auth Service (Gunicorn)
+Description=robot.wtf Platform Service (Gunicorn)
 After=network.target
 Wants=network.target
 
@@ -8,20 +8,22 @@ Type=notify
 User=robot
 Group=robot
 WorkingDirectory=/srv/app/src
+EnvironmentFile=/srv/data/robot.env
 ExecStart=/srv/app/venv/bin/gunicorn \
     -c app/gunicorn.conf.py \
-    app.auth_server:application
-EnvironmentFile=/srv/data/robot.env
-Environment=PLATFORM_DOMAIN=robot.wtf
+    app.platform_server:application
+Environment=ROBOT_DB_PATH=/srv/data/robot.db
 Environment=SIGNING_KEY_PATH=/srv/data/signing_key.pem
 Environment=CLIENT_JWK_PATH=/srv/data/client_jwk.json
-Environment=ROBOT_DB_PATH=/srv/data/robot.db
-Environment=GUNICORN_BIND=0.0.0.0:8003
+Environment=PLATFORM_DOMAIN=robot.wtf
+Environment=ROBOT_STATIC_DIR=/srv/static
+Environment=WIKI_BASE=/srv/data/wikis
+Environment=GUNICORN_BIND=0.0.0.0:8002
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=robot-auth
+SyslogIdentifier=robot-platform
 
 [Install]
 WantedBy=multi-user.target

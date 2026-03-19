@@ -129,7 +129,7 @@ def flask_app(rsa_keys, user_model, wiki_model, platform_jwt, tmp_path):
     """Create a configured Flask test app."""
     import os
     os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
-    from app.api_server import _create_flask_app
+    from app.platform_server import create_app as _create_flask_app
 
     app = _create_flask_app()
     app.config["TESTING"] = True
@@ -261,7 +261,7 @@ class TestWikiCreate:
         # handle "owner.bsky.social" -> slug "owner"
         assert 'value="owner"' in html
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_create_wiki_success(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
@@ -284,7 +284,7 @@ class TestWikiCreate:
         assert wiki is not None
         assert wiki["display_name"] == "Test Wiki"
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_create_wiki_shows_token(
         self, mock_init, client, owner_token, owner_user
     ):
@@ -373,7 +373,7 @@ class TestWikiCreate:
         # slug field should have empty value
         assert 'value=""' in html
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_create_wiki_derives_slug_from_handle(
         self, mock_init, client, platform_jwt, user_model, wiki_model
     ):
@@ -406,7 +406,7 @@ class TestWikiCreate:
 
 
 class TestWikiSettings:
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def _create_wiki(self, client, owner_token, mock_init):
         """Helper to create a wiki via the UI."""
         client.set_cookie("platform_token", owner_token, domain="localhost")
@@ -415,7 +415,7 @@ class TestWikiSettings:
             data={"slug": "settings-wiki", "display_name": "Settings Wiki"},
         )
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_settings_page_renders(
         self, mock_init, client, owner_token, owner_user
     ):
@@ -430,7 +430,7 @@ class TestWikiSettings:
         assert "Settings Wiki" in html
         assert "Danger zone" in html
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_update_display_name(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
@@ -448,7 +448,7 @@ class TestWikiSettings:
         wiki = wiki_model.get("update-wiki")
         assert wiki["display_name"] == "New Name"
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_settings_update_ignores_is_public(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
@@ -473,7 +473,7 @@ class TestWikiSettings:
         # is_public must not have been set to 1 — it should remain 0 (the schema default)
         assert wiki["is_public"] == 0
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_delete_wiki(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
@@ -490,7 +490,7 @@ class TestWikiSettings:
         assert resp.status_code == 302
         assert wiki_model.get("del-wiki") is None
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_delete_wiki_wrong_confirmation(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
@@ -511,7 +511,7 @@ class TestWikiSettings:
         resp = client.get("/app/wiki/nonexistent", follow_redirects=False)
         assert resp.status_code == 302
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_settings_access_denied(
         self, mock_init, client, owner_token, collab_token, owner_user, collab_user
     ):
@@ -531,7 +531,7 @@ class TestWikiSettings:
 
 
 class TestMCPOnWikiSettings:
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_wiki_settings_shows_mcp_info(
         self, mock_init, client, owner_token, owner_user
     ):
@@ -548,7 +548,7 @@ class TestMCPOnWikiSettings:
         assert "mcp-wiki" in html
         assert "claude mcp add" in html
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_wiki_settings_shows_mcp_token_once(
         self, mock_init, client, owner_token, owner_user
     ):
@@ -572,7 +572,7 @@ class TestMCPOnWikiSettings:
         html2 = resp2.data.decode()
         assert "Your MCP bearer token" not in html2
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_regenerate_token(
         self, mock_init, client, owner_token, owner_user, wiki_model
     ):
@@ -606,7 +606,7 @@ class TestAccount:
         assert "owner.bsky.social" in html
         assert "did:plc:owner" in html
 
-    @patch("app.api_server._init_wiki_repo")
+    @patch("app.platform_server._init_wiki_repo")
     def test_account_delete(
         self, mock_init, client, owner_token, owner_user, user_model, wiki_model
     ):
@@ -799,7 +799,7 @@ class TestRateLimiting:
         """Management UI app with rate limiting enabled."""
         import os
         os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
-        from app.api_server import _create_flask_app
+        from app.platform_server import create_app as _create_flask_app
 
         app = _create_flask_app()
         app.config["TESTING"] = True

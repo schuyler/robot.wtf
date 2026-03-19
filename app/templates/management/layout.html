@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Dashboard{% endblock %} &ndash; robot.wtf</title>
+  <link href="/app/static/css/halfmoon.min.css" rel="stylesheet">
+  <link href="/app/static/css/otterwiki.css" rel="stylesheet">
+  <link href="/app/static/css/fontawesome-all.min.css" rel="stylesheet">
+  <link href="/app/static/css/roboto.css" rel="stylesheet">
+  <link rel="icon" href="/static/robot.wtf.svg" type="image/svg+xml">
+  <style>
+    .token-display {
+      font-family: monospace;
+      background: rgba(0,0,0,0.05);
+      padding: 0.75rem;
+      border-radius: 0.4rem;
+      word-break: break-all;
+    }
+    .dark-mode .token-display { background: rgba(255,255,255,0.05); }
+    pre.code-block {
+      background: rgba(0,0,0,0.05);
+      padding: 0.75rem;
+      border-radius: 0.4rem;
+      overflow-x: auto;
+      font-size: 0.875rem;
+    }
+    .dark-mode pre.code-block { background: rgba(255,255,255,0.05); }
+    .mgmt-footer {
+      padding: 2rem 0 1rem;
+      border-top: 1px solid rgba(0,0,0,0.1);
+      text-align: center;
+      font-size: 0.8rem;
+      color: #767676;
+      margin-top: 3rem;
+    }
+    .mgmt-footer a { color: #555; text-decoration: none; }
+    .mgmt-footer a:hover { text-decoration: underline; }
+    .dark-mode .mgmt-footer { border-top-color: rgba(255,255,255,0.1); color: #aaa; }
+    .dark-mode .mgmt-footer a { color: #bbb; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body class="{% if request.cookies.get('halfmoon_preferredMode') == 'dark-mode' %}dark-mode{% endif %}">
+
+<div id="page-wrapper" class="page-wrapper with-navbar with-sidebar"
+     data-sidebar-type="overlayed-sm-and-down">
+
+  <div class="sticky-alerts"></div>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <button class="btn btn-action mr-5" onclick="halfmoon.toggleSidebar()" type="button">
+      <i class="fas fa-bars"></i>
+    </button>
+    <a href="/app/" class="navbar-brand mr-auto">
+      <img src="/static/robot.wtf.svg" alt="" height="24" style="vertical-align: middle; margin-right: 0.4rem;">
+      robot.wtf
+    </a>
+    <div class="navbar-nav ml-auto">
+      {% if user %}
+      <span class="nav-text mr-10 text-muted small">{{ user.handle }}</span>
+      {% endif %}
+      <div class="dropdown">
+        <button class="btn btn-action" data-toggle="dropdown" type="button">
+          <i class="fas fa-ellipsis-v"></i>
+        </button>
+        <div class="dropdown-menu dropdown-menu-right">
+          <a href="#" class="dropdown-item" onclick="halfmoon.toggleDarkMode(); return false;">
+            <i class="fas fa-moon mr-10"></i> Toggle dark mode
+          </a>
+          <div class="dropdown-divider"></div>
+          <a href="/auth/logout" class="dropdown-item">
+            <i class="fas fa-sign-out-alt mr-10"></i> Logout
+          </a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Sidebar overlay (mobile) -->
+  <div class="sidebar-overlay" onclick="halfmoon.toggleSidebar()"></div>
+
+  <!-- Sidebar -->
+  <div class="sidebar d-flex flex-column">
+    <div class="sidebar-menu w-full flex-grow-1">
+      <p class="sidebar-title">Your wikis</p>
+      {% for wiki in sidebar_wikis %}
+      <a href="/app/wiki/{{ wiki.slug }}"
+         class="sidebar-link sidebar-link-with-icon {% if request.path == '/app/wiki/' ~ wiki.slug %}active{% endif %}">
+        <span class="sidebar-icon"><i class="fas fa-book"></i></span>
+        {{ wiki.display_name }}
+      </a>
+      {% endfor %}
+      <br>
+      <a href="/app/create"
+         class="sidebar-link sidebar-link-with-icon {% if request.path == '/app/create' %}active{% endif %}">
+        <span class="sidebar-icon"><i class="fas fa-plus"></i></span>
+        Create wiki
+      </a>
+      <a href="/app/account"
+         class="sidebar-link sidebar-link-with-icon {% if request.path == '/app/account' %}active{% endif %}">
+        <span class="sidebar-icon"><i class="fas fa-user"></i></span>
+        Account
+      </a>
+      {% if is_platform_admin %}
+      <a href="/app/admin/stats"
+         class="sidebar-link sidebar-link-with-icon {% if request.path == '/app/admin/stats' %}active{% endif %}">
+        <span class="sidebar-icon"><i class="fas fa-chart-bar"></i></span>
+        System status
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content-wrapper">
+    <div class="container-fluid">
+      <div class="content">
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+    <footer class="mgmt-footer">
+      <p>Designed with love by <a href="https://bsky.app/profile/schuyler.info" target="_blank" rel="noopener">@schuyler.info</a> and built with <a href="https://bsky.app/profile/robot.wtf" target="_blank" rel="noopener">@robot.wtf</a></p>
+    </footer>
+  </div>
+
+</div>
+
+<script src="/app/static/js/halfmoon.js"></script>
+<script>
+halfmoon.onDOMContentLoaded();
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+    halfmoon.initStickyAlert({
+      content: {{ message | tojson }},
+      alertType: "alert-{{ category }}",
+      fillType: "filled",
+      hasDismissButton: true,
+    });
+  {% endfor %}
+{% endwith %}
+</script>
+{% block js %}{% endblock %}
+</body>
+</html>

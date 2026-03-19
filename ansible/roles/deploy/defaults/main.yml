@@ -1,7 +1,6 @@
 ---
 robot_services:
   - robot-otterwiki
-  - robot-api
-  - robot-auth
+  - robot-platform
   - robot-mcp
 platform_admin_dids: "did:plc:6kwt7jo6rxoui6frgitlozwl"

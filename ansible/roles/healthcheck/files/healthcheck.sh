@@ -14,8 +14,7 @@ FAILURES=""
 # Service name -> port mappings
 declare -A SERVICES=(
     [robot-otterwiki]=8000
-    [robot-api]=8002
-    [robot-auth]=8003
+    [robot-platform]=8002
     [robot-mcp]=8001
 )
 

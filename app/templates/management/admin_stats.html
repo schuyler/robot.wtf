@@ -1,0 +1,122 @@
+{% extends "management/layout.html" %}
+{% block title %}System Status{% endblock %}
+
+{% block content %}
+<h2 class="mb-20">System Status</h2>
+
+<!-- Service Status -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">Services</h5>
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for svc, status in service_status.items() %}
+        <tr>
+          <td><code>{{ svc }}</code></td>
+          <td>
+            {% if status == "active" %}
+            <span class="text-success">{{ status }}</span>
+            {% else %}
+            <span class="text-danger">{{ status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Disk Usage -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">Disk Usage (/srv)</h5>
+    <table class="table table-sm mb-0">
+      <tbody>
+        <tr>
+          <th style="width: 150px;">Used</th>
+          <td>{{ "%.1f"|format(disk_used_gb) }} GB</td>
+        </tr>
+        <tr>
+          <th>Free</th>
+          <td>{{ "%.1f"|format(disk_free_gb) }} GB</td>
+        </tr>
+        <tr>
+          <th>Total</th>
+          <td>{{ "%.1f"|format(disk_total_gb) }} GB</td>
+        </tr>
+        <tr>
+          <th>Usage</th>
+          <td>{{ disk_pct }}%</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Platform Counts -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">Platform Counts</h5>
+    <table class="table table-sm mb-0">
+      <tbody>
+        <tr>
+          <th style="width: 150px;">Wikis</th>
+          <td>{{ wiki_count }}</td>
+        </tr>
+        <tr>
+          <th>Users</th>
+          <td>{{ user_count }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Wiki List -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">All Wikis</h5>
+    {% if all_wikis %}
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr>
+          <th>Slug</th>
+          <th>Display Name</th>
+          <th>Owner DID</th>
+          <th>Created</th>
+          <th>Last Accessed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wiki in all_wikis %}
+        <tr>
+          <td><a href="/app/wiki/{{ wiki.slug }}">{{ wiki.slug }}</a></td>
+          <td>{{ wiki.display_name }}</td>
+          <td><code class="small">{{ wiki.owner_did }}</code></td>
+          <td>{{ wiki.created_at[:10] if wiki.created_at else "" }}</td>
+          <td>{{ wiki.last_accessed[:10] if wiki.last_accessed else "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted mb-0">No wikis yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Journal Tail -->
+<div class="card mb-20">
+  <div class="card-body">
+    <h5 class="card-title">Journal (last 50 lines)</h5>
+    <pre class="code-block mb-0" style="max-height: 400px; overflow-y: auto;">{{ journal }}</pre>
+  </div>
+</div>
+{% endblock %}

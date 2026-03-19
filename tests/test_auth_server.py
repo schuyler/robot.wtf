@@ -79,7 +79,7 @@ def app(db_path, client_jwk, rsa_keys):
     os.environ["PLATFORM_DOMAIN"] = "robot.wtf"
     os.environ["FLASK_SECRET_KEY"] = "test-secret"
 
-    from app.auth_server import create_app
+    from app.platform_server import create_app
     application = create_app(
         db_path=db_path,
         client_jwk_path=jwk_path,
@@ -281,8 +281,8 @@ class TestOAuthCallback:
         )
         assert resp.status_code == 400
 
-    @patch("app.auth_server.initial_token_request")
-    @patch("app.auth_server._fetch_display_name")
+    @patch("app.platform_server.initial_token_request")
+    @patch("app.platform_server._fetch_display_name")
     def test_callback_returning_user_sets_cookie(
         self, mock_display, mock_token, app, client, db_path
     ):
@@ -339,8 +339,8 @@ class TestOAuthCallback:
         assert "Secure" in cookie_header
         assert resp.headers["Location"].endswith("/app/")
 
-    @patch("app.auth_server.initial_token_request")
-    @patch("app.auth_server._fetch_display_name")
+    @patch("app.platform_server.initial_token_request")
+    @patch("app.platform_server._fetch_display_name")
     def test_callback_return_to_takes_precedence(
         self, mock_display, mock_token, app, client, db_path
     ):
@@ -391,8 +391,8 @@ class TestOAuthCallback:
         assert resp.headers["Location"] == "/auth/oauth/consent?client_id=test-client"
         assert not resp.headers["Location"].endswith("/app/")
 
-    @patch("app.auth_server.initial_token_request")
-    @patch("app.auth_server._fetch_display_name")
+    @patch("app.platform_server.initial_token_request")
+    @patch("app.platform_server._fetch_display_name")
     def test_callback_new_user_auto_creates_and_sets_cookie(
         self, mock_display, mock_token, app, client, db_path
     ):
@@ -510,28 +510,28 @@ class TestReturnToValidation:
     """_is_safe_return_url accepts relative + wiki subdomain URLs, rejects external."""
 
     def test_return_to_accepts_relative(self):
-        from app.auth_server import _is_safe_return_url
+        from app.platform_server import _is_safe_return_url
         assert _is_safe_return_url("/app/") is True
         assert _is_safe_return_url("/auth/oauth/consent?client_id=x") is True
 
     def test_return_to_accepts_wiki_subdomain(self):
-        from app.auth_server import _is_safe_return_url
+        from app.platform_server import _is_safe_return_url
         assert _is_safe_return_url("https://foo.robot.wtf/Page") is True
         assert _is_safe_return_url("https://untangling-collective.robot.wtf/") is True
 
     def test_return_to_rejects_external_domain(self):
-        from app.auth_server import _is_safe_return_url
+        from app.platform_server import _is_safe_return_url
         assert _is_safe_return_url("https://evil.com/") is False
         assert _is_safe_return_url("http://robot.wtf.evil.com/") is False
 
     def test_return_to_rejects_bare_platform_domain(self):
         """The bare platform domain (robot.wtf) is not a wiki subdomain."""
-        from app.auth_server import _is_safe_return_url
+        from app.platform_server import _is_safe_return_url
         # robot.wtf itself is not *.robot.wtf
         assert _is_safe_return_url("https://robot.wtf/app/") is False
 
     def test_return_to_rejects_empty_string(self):
-        from app.auth_server import _is_safe_return_url
+        from app.platform_server import _is_safe_return_url
         assert _is_safe_return_url("") is False
 
     def test_post_login_redirects_to_wiki(self, app, client, db_path):
@@ -541,8 +541,8 @@ class TestReturnToValidation:
         from datetime import datetime, timezone
         from authlib.jose import JsonWebKey
 
-        with patch("app.auth_server.initial_token_request") as mock_token, \
-             patch("app.auth_server._fetch_display_name") as mock_display:
+        with patch("app.platform_server.initial_token_request") as mock_token, \
+             patch("app.platform_server._fetch_display_name") as mock_display:
             mock_display.return_value = "Alice"
             mock_token.return_value = (
                 {
@@ -648,7 +648,7 @@ class TestFlaskSecretKeyEnforcement:
         saved = os.environ.pop("FLASK_SECRET_KEY", None)
         os.environ.pop("FLASK_ENV", None)  # not testing mode
         try:
-            from app.auth_server import create_app
+            from app.platform_server import create_app
             with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
                 create_app(
                     db_path=db_path,
@@ -672,7 +672,7 @@ class TestFlaskSecretKeyEnforcement:
         os.environ["FLASK_SECRET_KEY"] = "dev-secret-change-me"
         os.environ.pop("FLASK_ENV", None)
         try:
-            from app.auth_server import create_app
+            from app.platform_server import create_app
             with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
                 create_app(
                     db_path=db_path,
@@ -696,7 +696,7 @@ class TestFlaskSecretKeyEnforcement:
         os.environ["ROBOT_DB_PATH"] = db_path
         os.environ["FLASK_SECRET_KEY"] = "a-proper-secret-key-for-testing-xyz"
         try:
-            from app.auth_server import create_app
+            from app.platform_server import create_app
             application = create_app(
                 db_path=db_path,
                 client_jwk_path=jwk_path,
@@ -729,7 +729,7 @@ class TestRateLimiting:
         os.environ["PLATFORM_DOMAIN"] = "robot.wtf"
         os.environ["FLASK_SECRET_KEY"] = "test-secret"
 
-        from app.auth_server import create_app
+        from app.platform_server import create_app
         application = create_app(
             db_path=db_path,
             client_jwk_path=jwk_path,
@@ -790,7 +790,7 @@ class TestNormalizeHandle:
     """Unit tests for normalize_handle()."""
 
     def setup_method(self):
-        from app.auth_server import normalize_handle
+        from app.platform_server import normalize_handle
         self.normalize_handle = normalize_handle
 
     def test_bare_handle_appends_bsky_social(self):
@@ -824,14 +824,14 @@ class TestLoginNormalizeHandle:
 
     def test_bare_handle_resolves_with_bsky_social(self, client):
         """POST with bare 'alice' should resolve as 'alice.bsky.social'."""
-        with patch("app.auth_server.resolve_identity") as mock_resolve:
+        with patch("app.platform_server.resolve_identity") as mock_resolve:
             mock_resolve.side_effect = Exception("stop after resolve")
             client.post("/auth/login", data={"username": "alice"})
             mock_resolve.assert_called_once_with("alice.bsky.social")
 
     def test_at_bare_handle_resolves_with_bsky_social(self, client):
         """POST with '@alice' should resolve as 'alice.bsky.social'."""
-        with patch("app.auth_server.resolve_identity") as mock_resolve:
+        with patch("app.platform_server.resolve_identity") as mock_resolve:
             mock_resolve.side_effect = Exception("stop after resolve")
             client.post("/auth/login", data={"username": "@alice"})
             mock_resolve.assert_called_once_with("alice.bsky.social")
