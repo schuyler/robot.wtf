@@ -645,9 +645,9 @@ class TenantResolver:
         if wiki_slug is None:
             # Non-tenant host — not a wiki subdomain, deny access.
             # The platform domain and reserved subdomains (api, auth, mcp, www)
-            # are served by separate processes (api_server, auth_server); if a
-            # request somehow reaches the TenantResolver for those hosts it must
-            # NOT be granted any permissions, especially not ADMIN.
+            # are served by platform_server; if a request somehow reaches the
+            # TenantResolver for those hosts it must NOT be granted any
+            # permissions, especially not ADMIN.
             return _error_response(start_response, 404, "Not Found")
 
         # Look up wiki by slug

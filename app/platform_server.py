@@ -1308,11 +1308,12 @@ def create_app(
     _user_model = user_model or app.config.get("USER_MODEL")
     _wiki_model = wiki_model or app.config.get("WIKI_MODEL")
 
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
     if _auth_mw and _user_model and _wiki_model:
         # Wrap the Flask internal wsgi_app (not the Flask app itself) to avoid
         # recursion: ManagementMiddleware delegates to app.wsgi_app (original),
         # and ProxyFix sits outermost.
-        from werkzeug.middleware.proxy_fix import ProxyFix
         app.wsgi_app = ProxyFix(
             ManagementMiddleware(
                 app.wsgi_app,
@@ -1322,15 +1323,15 @@ def create_app(
             ),
             x_for=1, x_proto=1, x_host=1,
         )
+    else:
+        # Apply ProxyFix unconditionally so REMOTE_ADDR is correct for rate limiting.
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     return app
 
 
-# Gunicorn entry point
-try:
-    application = create_app()
-except Exception:
-    application = None  # Tests create their own app via create_app()
+# Gunicorn entry point — let failures propagate so Gunicorn fails fast.
+application = create_app()
 
 
 if __name__ == "__main__":

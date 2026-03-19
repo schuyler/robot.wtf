@@ -13,9 +13,7 @@ ExecStart=/srv/app/venv/bin/gunicorn \
     -c app/gunicorn.conf.py \
     app.platform_server:application
 Environment=ROBOT_DB_PATH=/srv/data/robot.db
-Environment=SIGNING_KEY_PATH=/srv/data/signing_key.pem
 Environment=CLIENT_JWK_PATH=/srv/data/client_jwk.json
-Environment=PLATFORM_DOMAIN=robot.wtf
 Environment=ROBOT_STATIC_DIR=/srv/static
 Environment=WIKI_BASE=/srv/data/wikis
 Environment=GUNICORN_BIND=0.0.0.0:8002

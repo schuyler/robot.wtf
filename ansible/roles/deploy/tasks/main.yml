@@ -109,6 +109,20 @@
     enabled: false
   failed_when: false
 
+- name: Stop and disable robot-api service if present
+  ansible.builtin.systemd:
+    name: robot-api
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Stop and disable robot-auth service if present
+  ansible.builtin.systemd:
+    name: robot-auth
+    state: stopped
+    enabled: false
+  failed_when: false
+
 - name: Template robot.env
   ansible.builtin.template:
     src: robot.env.j2
