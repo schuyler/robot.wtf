@@ -3,11 +3,17 @@
 Adapted from bluesky-social/cookbook (CC-0).
 """
 
+import os
 import re
 import dns.resolver
 from typing import Optional, Tuple
 
-from app.auth.atproto_security import hardened_http
+from app.auth.atproto_security import hardened_http, _ALLOW_HTTP_PDS
+
+PLC_DIRECTORY_URL = os.environ.get("PLC_DIRECTORY_URL", "https://plc.directory")
+if not PLC_DIRECTORY_URL.startswith("https://"):
+    if not _ALLOW_HTTP_PDS:
+        raise RuntimeError("PLC_DIRECTORY_URL must use HTTPS in production")
 
 HANDLE_REGEX = r"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
 DID_REGEX = r"^did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]$"
@@ -55,8 +61,9 @@ def resolve_identity(atid: str) -> Tuple[str, str, dict]:
         handle = handle_from_doc(doc)
         if not handle:
             raise Exception("Handle did not match DID: " + str(handle))
-        if resolve_handle(handle) != did:
-            raise Exception("Handle did not match DID: " + handle)
+        if not _ALLOW_HTTP_PDS:
+            if resolve_handle(handle) != did:
+                raise Exception("Handle did not match DID: " + handle)
         return did, handle, doc
 
     raise Exception("identifier not a handle or DID: " + atid)
@@ -94,7 +101,7 @@ def resolve_handle(handle: str) -> Optional[str]:
 def resolve_did(did: str) -> Optional[dict]:
     if did.startswith("did:plc:"):
         import requests
-        resp = requests.get(f"https://plc.directory/{did}")
+        resp = requests.get(f"{PLC_DIRECTORY_URL}/{did}")
         if resp.status_code != 200:
             return None
         return resp.json()

@@ -68,7 +68,7 @@ from app.auth.atproto_oauth import (
     fetch_authserver_meta,
     revoke_token_request,
 )
-from app.auth.atproto_security import is_safe_url
+from app.auth.atproto_security import is_safe_url, _ALLOW_HTTP_PDS
 from app.auth.consent import (
     APPROVAL_TOKEN_LIFETIME,
     CONSENT_TOKEN_LIFETIME,
@@ -94,16 +94,21 @@ from app.models.wiki import WikiModel
 logger = logging.getLogger(__name__)
 
 PLATFORM_DOMAIN = os.environ.get("PLATFORM_DOMAIN", "robot.wtf")
-COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", f".{PLATFORM_DOMAIN}")
+COOKIE_DOMAIN = (
+    None if PLATFORM_DOMAIN in ("localhost", "127.0.0.1") or ":" in PLATFORM_DOMAIN
+    else os.environ.get("COOKIE_DOMAIN", f".{PLATFORM_DOMAIN}")
+)
 COOKIE_NAME = "platform_token"
 COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours
 
 # Identity-only scope — we just need to prove the user owns a DID
 OAUTH_SCOPE = "atproto"
 
+_SCHEME = "http" if _ALLOW_HTTP_PDS else "https"
+
 # Fixed client_id — the URL where client metadata is served
-CLIENT_ID = f"https://{PLATFORM_DOMAIN}/auth/client-metadata.json"
-REDIRECT_URI = f"https://{PLATFORM_DOMAIN}/auth/callback"
+CLIENT_ID = f"{_SCHEME}://{PLATFORM_DOMAIN}/auth/client-metadata.json"
+REDIRECT_URI = f"{_SCHEME}://{PLATFORM_DOMAIN}/auth/callback"
 
 STATIC_DIR = os.environ.get("ROBOT_STATIC_DIR", "/srv/static")
 WIKI_BASE = os.environ.get("WIKI_BASE", "/srv/data/wikis")
@@ -128,7 +133,12 @@ def _is_safe_return_url(url: str) -> bool:
         return True
     # Accept https://<slug>.robot.wtf/... — slug must be at least one char
     pattern = rf"^https://[a-z0-9][a-z0-9-]*\.{re.escape(PLATFORM_DOMAIN)}/"
-    return bool(re.match(pattern, url))
+    if re.match(pattern, url):
+        return True
+    if _SCHEME == "http":
+        pattern = rf"^http://(localhost|127\.0\.0\.1)(:\d+)?/"
+        return bool(re.match(pattern, url))
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +258,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
 
     def _build_authorize_callback_url(oauth_params: dict, approval_token: str, wiki_slug: str) -> str:
         """Build the URL to redirect back to MCP /authorize/callback."""
-        base = f"https://{wiki_slug}.{PLATFORM_DOMAIN}/authorize/callback"
+        base = f"{_SCHEME}://{wiki_slug}.{PLATFORM_DOMAIN}/authorize/callback"
         query = urlencode({
             **oauth_params,
             "approval_token": approval_token,
@@ -272,7 +282,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
                 "keys": [client_pub_jwk],
             },
             "client_name": "robot.wtf",
-            "client_uri": f"https://{PLATFORM_DOMAIN}",
+            "client_uri": f"{_SCHEME}://{PLATFORM_DOMAIN}",
         })
 
     @app.route("/auth/login", methods=("GET", "POST"))
@@ -291,7 +301,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
                     platform_jwt.validate_token(cookie_token)
                     for key in ("return_to", "csrf_nonces"):
                         session.pop(key, None)
-                    redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
+                    redirect_target = return_to or f"{_SCHEME}://{PLATFORM_DOMAIN}/app/"
                     return redirect(redirect_target)
                 except pyjwt.ExpiredSignatureError:
                     try:
@@ -337,7 +347,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
             pds_url = pds_endpoint(did_doc)
             logger.info("account PDS: %s", pds_url)
             authserver_url = resolve_pds_authserver(pds_url)
-        elif username.startswith("https://") and is_safe_url(username):
+        elif (username.startswith("https://") or (_ALLOW_HTTP_PDS and username.startswith("http://"))) and is_safe_url(username):
             did, handle, pds_url = None, None, None
             login_hint = None
             initial_url = username
@@ -521,7 +531,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
         return_to = session.pop("return_to", None)
         if return_to and not _is_safe_return_url(return_to):
             return_to = None
-        redirect_target = return_to or f"https://{PLATFORM_DOMAIN}/app/"
+        redirect_target = return_to or f"{_SCHEME}://{PLATFORM_DOMAIN}/app/"
 
         resp = make_response(redirect(redirect_target))
         resp.set_cookie(
@@ -529,7 +539,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
             token,
             max_age=COOKIE_MAX_AGE,
             httponly=True,
-            secure=True,
+            secure=_SCHEME == "https",
             samesite="Lax",
             domain=COOKIE_DOMAIN,
         )
@@ -685,7 +695,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
                 pass
 
         session.clear()
-        resp = make_response(redirect(f"https://{PLATFORM_DOMAIN}/"))
+        resp = make_response(redirect(f"{_SCHEME}://{PLATFORM_DOMAIN}/"))
         resp.delete_cookie(
             COOKIE_NAME,
             domain=COOKIE_DOMAIN,
@@ -696,10 +706,10 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
     def as_metadata():
         """OAuth Authorization Server metadata stub."""
         return jsonify({
-            "issuer": f"https://{PLATFORM_DOMAIN}",
-            "authorization_endpoint": f"https://{PLATFORM_DOMAIN}/auth/login",
-            "token_endpoint": f"https://{PLATFORM_DOMAIN}/auth/token",
-            "jwks_uri": f"https://{PLATFORM_DOMAIN}/.well-known/jwks.json",
+            "issuer": f"{_SCHEME}://{PLATFORM_DOMAIN}",
+            "authorization_endpoint": f"{_SCHEME}://{PLATFORM_DOMAIN}/auth/login",
+            "token_endpoint": f"{_SCHEME}://{PLATFORM_DOMAIN}/auth/token",
+            "jwks_uri": f"{_SCHEME}://{PLATFORM_DOMAIN}/.well-known/jwks.json",
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
@@ -1209,7 +1219,7 @@ def create_app(
         secret_key = "test-secret-for-testing-only"
     app.secret_key = secret_key
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = True
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") != "testing"
 
     # Rate limiting
     from flask_limiter import Limiter
@@ -1220,6 +1230,7 @@ def create_app(
         app=app,
         default_limits=["60/minute"],
         storage_uri="memory://",
+        enabled=os.environ.get("FLASK_ENV") != "testing",
     )
 
     # Try to load auth keys; if unavailable, skip auth route registration.

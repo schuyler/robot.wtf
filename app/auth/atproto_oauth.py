@@ -14,15 +14,16 @@ from authlib.jose import jwt
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 import urllib.request
 
-from app.auth.atproto_security import is_safe_url, hardened_http
+from app.auth.atproto_security import is_safe_url, hardened_http, _ALLOW_HTTP_PDS
 
 
 def is_valid_authserver_meta(obj: dict, url: str) -> bool:
     fetch_url = urlparse(url)
     issuer_url = urlparse(obj["issuer"])
     assert issuer_url.hostname == fetch_url.hostname
-    assert issuer_url.scheme == "https"
-    assert issuer_url.port is None
+    if not _ALLOW_HTTP_PDS:
+        assert issuer_url.scheme == "https"
+        assert issuer_url.port is None
     assert issuer_url.path in ["", "/"]
     assert issuer_url.params == ""
     assert issuer_url.fragment == ""
