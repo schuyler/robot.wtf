@@ -388,6 +388,32 @@ class TestTierLimits:
         assert status == 403
         assert "limit" in body["error"].lower()
 
+    def test_admin_bypasses_wiki_limit(self, auth_middleware, user_model, wiki_model, wiki_base, owner_user, template_dir):
+        """Platform admin can create multiple wikis beyond the free tier limit."""
+        admin_dids = {owner_user["did"]}
+        inner_app = MagicMock()
+        inner_app.return_value = [b"inner app"]
+        mw = ManagementMiddleware(
+            inner_app,
+            auth_middleware=auth_middleware,
+            user_model=user_model,
+            wiki_model=wiki_model,
+            wiki_base=wiki_base,
+            admin_dids=admin_dids,
+        )
+
+        status, _ = _call_api(
+            mw, "POST", "/api/wikis",
+            body={"slug": "first-wiki", "display_name": "First Wiki"},
+        )
+        assert status == 201
+
+        status, _ = _call_api(
+            mw, "POST", "/api/wikis",
+            body={"slug": "second-wiki", "display_name": "Second Wiki"},
+        )
+        assert status == 201
+
 
 # --- Validation Tests ---
 

@@ -784,8 +784,9 @@ def _register_management_ui_routes(app, limiter):
             flash(f"Invalid slug: {error}", "danger")
             return redirect(url_for("wiki_create"))
 
+        is_admin = user.user_did in app.config.get("PLATFORM_ADMIN_DIDS", set())
         wiki_count = int(user.record.get("wiki_count", 0))
-        if wiki_count >= 1:
+        if wiki_count >= 1 and not is_admin:
             flash("You can only have one wiki on the free tier.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -1320,6 +1321,7 @@ def create_app(
                 auth_middleware=_auth_mw,
                 user_model=_user_model,
                 wiki_model=_wiki_model,
+                admin_dids=app.config["PLATFORM_ADMIN_DIDS"],
             ),
             x_for=1, x_proto=1, x_host=1,
         )

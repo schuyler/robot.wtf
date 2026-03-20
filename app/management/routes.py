@@ -152,12 +152,14 @@ class ManagementMiddleware:
         wiki_model: WikiModel,
         acl_model=None,  # kept for backwards compatibility, no longer used
         wiki_base: str | None = None,
+        admin_dids: frozenset[str] | set[str] = frozenset(),
     ):
         self._app = app
         self._auth = auth_middleware
         self._users = user_model
         self._wikis = wiki_model
         self._wiki_base = wiki_base or os.environ.get("WIKI_BASE", WIKI_BASE)
+        self._admin_dids = admin_dids
 
     def __call__(self, environ: dict, start_response: Callable) -> Any:
         path = environ.get("PATH_INFO", "")
@@ -291,7 +293,7 @@ class ManagementMiddleware:
 
         # Check tier limit: max wikis per user
         wiki_count = int(user.record.get("wiki_count", 0))
-        if wiki_count >= MAX_WIKIS_PER_USER:
+        if wiki_count >= MAX_WIKIS_PER_USER and user.user_did not in self._admin_dids:
             return 403, {
                 "error": f"Wiki limit reached ({MAX_WIKIS_PER_USER} wiki per user on free tier)"
             }
