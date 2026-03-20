@@ -1232,6 +1232,10 @@ def create_app(
         storage_uri="memory://",
         enabled=os.environ.get("FLASK_ENV") != "testing",
     )
+    # Keep a strong reference to prevent garbage collection.
+    # Flask-Limiter uses weak references internally; without this the limiter
+    # is collected after create_app() returns, causing ReferenceError at runtime.
+    app.config["_LIMITER"] = limiter
 
     # Try to load auth keys; if unavailable, skip auth route registration.
     # Management-only tests call create_app() without keys set in the env.
