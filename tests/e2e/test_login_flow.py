@@ -77,5 +77,5 @@ def test_auth_callback_error_shows_flash(browser, platform_server):
     content = page.content()
     assert "Internal Server Error" not in content
     # The callback flashes the error description
-    assert "access_denied" in content.lower() or "denied" in content.lower() or "Authorization" in content
+    assert "access_denied" in content or "denied" in content.lower()
     context.close()

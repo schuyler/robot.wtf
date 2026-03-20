@@ -130,10 +130,11 @@ def test_wiki_deletion_wrong_slug_rejected(authenticated_page, platform_server, 
     page.wait_for_load_state("networkidle")
     content = page.content()
     assert "did not match" in content or "confirmation" in content.lower()
-    # Wiki must still exist (not deleted)
-    import requests
-    resp = requests.get(f"{platform_server}/app/wiki/{slug}", allow_redirects=False)
-    assert resp.status_code in (200, 302), f"Wiki should still exist, got {resp.status_code}"
+    # Wiki must still exist (not deleted) — use authenticated page to verify
+    page.goto(f"{platform_server}/app/wiki/{slug}")
+    page.wait_for_load_state("networkidle")
+    assert f"/app/wiki/{slug}" in page.url, \
+        f"Wiki settings page should still load after failed deletion, got: {page.url}"
 
 
 def test_wiki_creation_duplicate_slug_rejected(authenticated_page, platform_server, wiki_fixture):

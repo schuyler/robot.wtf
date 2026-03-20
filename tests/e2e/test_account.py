@@ -75,7 +75,7 @@ def test_mcp_consent_page_renders(authenticated_page, platform_server, wiki_fixt
 
 
 def test_mcp_consent_deny_redirects(authenticated_page, platform_server, wiki_fixture):
-    """Denying MCP consent redirects with error parameter."""
+    """Denying MCP consent redirects with error=access_denied parameter."""
     page = authenticated_page
     consent_url = (f"{platform_server}/auth/oauth/consent"
                    f"?client_id=http://127.0.0.1/client"
@@ -83,17 +83,16 @@ def test_mcp_consent_deny_redirects(authenticated_page, platform_server, wiki_fi
                    f"&state=test-state&scope=atproto"
                    f"&wiki_slug={wiki_fixture['slug']}")
     page.goto(consent_url)
-    # Check if consent page rendered
-    try:
-        page.wait_for_selector("text=requesting access", timeout=5000)
-        # Try clicking deny
-        deny_btn = page.locator("button[value='deny'], button:has-text('Deny'), input[value*='Deny']").first
-        if deny_btn.is_visible(timeout=3000):
-            deny_btn.click()
-            page.wait_for_load_state("networkidle")
-            # Should redirect with error param or show error
-    except Exception:
-        pytest.skip("Consent page requires session state from OAuth flow")
+    page.wait_for_selector("text=requesting access", timeout=5000)
+
+    deny_btn = page.locator("button[value='deny'], button:has-text('Deny'), input[value*='Deny']").first
+    assert deny_btn.is_visible(timeout=3000), "Deny button not visible on consent page"
+    deny_btn.click()
+    page.wait_for_load_state("networkidle")
+
+    # Server redirects to redirect_uri with error=access_denied
+    assert "access_denied" in page.url or "error" in page.url, \
+        f"Expected access_denied in redirect URL, got: {page.url}"
 
 
 def test_account_deletion(destructive_page, platform_server, test_account):
