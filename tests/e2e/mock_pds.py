@@ -16,6 +16,7 @@ Endpoints:
 - GET  /oauth/jwks
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -27,6 +28,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlencode, urlparse, parse_qs
 
 # In-memory state
+_lock = threading.Lock()
 _accounts = {}  # handle -> {did, email, password}
 _auth_requests = {}  # request_uri -> {client_id, redirect_uri, state, code_challenge, scope, login_hint}
 _auth_codes = {}  # code -> {client_id, redirect_uri, did, code_challenge}
@@ -75,10 +77,11 @@ class MockPDSHandler(BaseHTTPRequestHandler):
 
         elif path == "/oauth/authorize":
             request_uri = qs.get("request_uri", [None])[0]
-            if not request_uri or request_uri not in _auth_requests:
+            with _lock:
+                req = _auth_requests.get(request_uri) if request_uri else None
+            if not req:
                 self._json(400, {"error": "invalid_request", "error_description": "Unknown request_uri"})
                 return
-            req = _auth_requests[request_uri]
             login_hint = req.get("login_hint", "")
             # Serve a simple HTML login+consent form
             self._html(200, f"""<!doctype html>
@@ -102,13 +105,16 @@ class MockPDSHandler(BaseHTTPRequestHandler):
         elif path.startswith("/did:plc:"):
             # Serve DID documents (acts as PLC directory for mock accounts)
             did = path[1:]  # strip leading /
-            for acct in _accounts.values():
-                if acct["did"] == did:
-                    self._json(200, _make_did_doc(
-                        did, acct["handle"], self.server.server_address[1]
-                    ))
-                    return
-            self._json(404, {"error": "not_found"})
+            with _lock:
+                matched = next(
+                    (acct for acct in _accounts.values() if acct["did"] == did), None
+                )
+            if matched:
+                self._json(200, _make_did_doc(
+                    did, matched["handle"], self.server.server_address[1]
+                ))
+            else:
+                self._json(404, {"error": "not_found"})
 
         else:
             self._json(404, {"error": "not_found"})
@@ -124,11 +130,12 @@ class MockPDSHandler(BaseHTTPRequestHandler):
             handle = data.get("handle", "")
             email = data.get("email", "")
             password = data.get("password", "")
-            if handle in _accounts:
-                self._json(400, {"error": "HandleNotAvailable", "message": "Handle already taken"})
-                return
-            did = f"did:plc:{secrets.token_hex(16)}"
-            _accounts[handle] = {"did": did, "email": email, "password": password, "handle": handle}
+            with _lock:
+                if handle in _accounts:
+                    self._json(400, {"error": "HandleNotAvailable", "message": "Handle already taken"})
+                    return
+                did = f"did:plc:{secrets.token_hex(16)}"
+                _accounts[handle] = {"did": did, "email": email, "password": password, "handle": handle}
             self._json(200, {
                 "handle": handle,
                 "did": did,
@@ -141,7 +148,8 @@ class MockPDSHandler(BaseHTTPRequestHandler):
             data = json.loads(raw_body)
             identifier = data.get("identifier", "")
             password = data.get("password", "")
-            account = _accounts.get(identifier)
+            with _lock:
+                account = _accounts.get(identifier)
             if not account or account["password"] != password:
                 self._json(401, {"error": "AuthenticationRequired", "message": "Invalid credentials"})
                 return
@@ -165,14 +173,15 @@ class MockPDSHandler(BaseHTTPRequestHandler):
             login_hint = params.get("login_hint", "")
 
             request_uri = f"urn:ietf:params:oauth:request_uri:{secrets.token_hex(16)}"
-            _auth_requests[request_uri] = {
-                "client_id": client_id,
-                "redirect_uri": redirect_uri,
-                "state": state,
-                "code_challenge": code_challenge,
-                "scope": scope,
-                "login_hint": login_hint,
-            }
+            with _lock:
+                _auth_requests[request_uri] = {
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "state": state,
+                    "code_challenge": code_challenge,
+                    "scope": scope,
+                    "login_hint": login_hint,
+                }
             # Return DPoP nonce in header (mock)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -193,11 +202,11 @@ class MockPDSHandler(BaseHTTPRequestHandler):
             identifier = params.get("identifier", "")
             password = params.get("password", "")
 
-            if request_uri not in _auth_requests:
-                self._json(400, {"error": "invalid_request"})
-                return
-
-            req = _auth_requests.pop(request_uri)
+            with _lock:
+                if request_uri not in _auth_requests:
+                    self._json(400, {"error": "invalid_request"})
+                    return
+                req = _auth_requests.pop(request_uri)
 
             if action == "deny":
                 redirect_uri = req["redirect_uri"]
@@ -207,11 +216,12 @@ class MockPDSHandler(BaseHTTPRequestHandler):
 
             # Validate credentials
             account = None
-            for acct in _accounts.values():
-                if acct["handle"] == identifier or acct["did"] == identifier:
-                    if acct["password"] == password:
-                        account = acct
-                        break
+            with _lock:
+                for acct in _accounts.values():
+                    if acct["handle"] == identifier or acct["did"] == identifier:
+                        if acct["password"] == password:
+                            account = acct
+                            break
 
             if not account:
                 # Re-show form with error (simplified: just reject)
@@ -220,13 +230,14 @@ class MockPDSHandler(BaseHTTPRequestHandler):
 
             # Generate authorization code
             code = secrets.token_hex(32)
-            _auth_codes[code] = {
-                "client_id": req["client_id"],
-                "redirect_uri": req["redirect_uri"],
-                "did": account["did"],
-                "code_challenge": req["code_challenge"],
-                "scope": req["scope"],
-            }
+            with _lock:
+                _auth_codes[code] = {
+                    "client_id": req["client_id"],
+                    "redirect_uri": req["redirect_uri"],
+                    "did": account["did"],
+                    "code_challenge": req["code_challenge"],
+                    "scope": req["scope"],
+                }
 
             base = f"http://127.0.0.1:{self.server.server_address[1]}"
             redirect_uri = req["redirect_uri"]
@@ -241,12 +252,22 @@ class MockPDSHandler(BaseHTTPRequestHandler):
             params = {k: v[0] for k, v in params_multi.items()}
 
             code = params.get("code", "")
-            if code not in _auth_codes:
-                self._json(400, {"error": "invalid_grant"})
-                return
+            with _lock:
+                if code not in _auth_codes:
+                    self._json(400, {"error": "invalid_grant"})
+                    return
+                auth_code = _auth_codes.pop(code)
 
-            auth_code = _auth_codes.pop(code)
-            # Skip PKCE verification in the mock — just issue tokens
+            # Verify PKCE
+            code_challenge = auth_code.get("code_challenge")
+            code_verifier = params.get("code_verifier", "")
+            if code_challenge:
+                digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+                computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+                if computed != code_challenge:
+                    self._json(400, {"error": "invalid_grant", "error_description": "PKCE verification failed"})
+                    return
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("DPoP-Nonce", f"mock-nonce-{secrets.token_hex(8)}")

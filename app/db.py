@@ -30,7 +30,8 @@ def get_connection(db_path: str | None = None) -> sqlite3.Connection:
         Configured sqlite3.Connection with row_factory set to sqlite3.Row.
     """
     path = db_path or get_db_path()
-    conn = sqlite3.connect(path, check_same_thread=False)
+    check_same_thread = os.environ.get("FLASK_ENV") != "testing"
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

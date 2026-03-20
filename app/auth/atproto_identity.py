@@ -10,10 +10,6 @@ from typing import Optional, Tuple
 
 from app.auth.atproto_security import hardened_http, _ALLOW_HTTP_PDS
 
-PLC_DIRECTORY_URL = os.environ.get("PLC_DIRECTORY_URL", "https://plc.directory")
-if not PLC_DIRECTORY_URL.startswith("https://"):
-    if not _ALLOW_HTTP_PDS:
-        raise RuntimeError("PLC_DIRECTORY_URL must use HTTPS in production")
 
 HANDLE_REGEX = r"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
 DID_REGEX = r"^did:[a-z]+:[a-zA-Z0-9._:%-]*[a-zA-Z0-9._-]$"
@@ -100,8 +96,14 @@ def resolve_handle(handle: str) -> Optional[str]:
 
 def resolve_did(did: str) -> Optional[dict]:
     if did.startswith("did:plc:"):
-        import requests
-        resp = requests.get(f"{PLC_DIRECTORY_URL}/{did}")
+        plc_url = os.environ.get("PLC_DIRECTORY_URL", "https://plc.directory")
+        if not plc_url.startswith("https://") and not _ALLOW_HTTP_PDS:
+            raise RuntimeError("PLC_DIRECTORY_URL must use HTTPS in production")
+        try:
+            with hardened_http.get_session() as sess:
+                resp = sess.get(f"{plc_url}/{did}")
+        except Exception:
+            return None
         if resp.status_code != 200:
             return None
         return resp.json()
