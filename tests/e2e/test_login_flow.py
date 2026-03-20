@@ -62,3 +62,20 @@ def test_logout(authenticated_page, platform_server):
     cookies = page.context.cookies()
     platform_cookies = [c for c in cookies if c["name"] == "platform_token" and c.get("value")]
     assert not platform_cookies, "platform_token cookie should be cleared after logout"
+
+
+def test_auth_callback_error_shows_flash(browser, platform_server):
+    """OAuth callback with error param does not crash (no 500).
+
+    Uses a fresh unauthenticated context so the error flash is visible on
+    /auth/login rather than being swallowed by an auto-redirect to /app/.
+    """
+    context = browser.new_context()
+    page = context.new_page()
+    page.goto(f"{platform_server}/auth/callback?error=access_denied&error_description=User+denied")
+    page.wait_for_url(re.compile(r"/auth/login"), timeout=5000)
+    content = page.content()
+    assert "Internal Server Error" not in content
+    # The callback flashes the error description
+    assert "access_denied" in content.lower() or "denied" in content.lower() or "Authorization" in content
+    context.close()

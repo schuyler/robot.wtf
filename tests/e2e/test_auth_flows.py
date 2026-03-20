@@ -5,6 +5,16 @@ import re
 import pytest
 
 
+def test_unauthenticated_access_redirects_to_login(platform_server, browser):
+    """Accessing /app/* without auth redirects to login with return_to."""
+    context = browser.new_context()
+    page = context.new_page()
+    page.goto(f"{platform_server}/app/account")
+    page.wait_for_url(re.compile(r"/auth/login"), timeout=5000)
+    assert "return_to" in page.url
+    context.close()
+
+
 def test_auto_redirect_when_authenticated(authenticated_page, platform_server):
     """Visiting /auth/login with valid cookie redirects to /app/."""
     page = authenticated_page
