@@ -762,18 +762,20 @@ class TenantResolver:
         This must be called AFTER _swap_database() so the correct DB is active.
         """
         try:
+            import otterwiki.server
             from otterwiki.models import User
-            user = User.query.filter_by(email=f"@{handle}").first()
-            if user:
-                return {
-                    "is_admin": bool(user.is_admin),
-                    "is_approved": bool(user.is_approved),
-                    "allow_read": bool(user.allow_read),
-                    "allow_write": bool(user.allow_write),
-                    "allow_upload": bool(user.allow_upload),
-                }
-        except BaseException:
-            pass
+            with otterwiki.server.app.app_context():
+                user = User.query.filter_by(email=f"@{handle}").first()
+                if user:
+                    return {
+                        "is_admin": bool(user.is_admin),
+                        "is_approved": bool(user.is_approved),
+                        "allow_read": bool(user.allow_read),
+                        "allow_write": bool(user.allow_write),
+                        "allow_upload": bool(user.allow_upload),
+                    }
+        except Exception:
+            logger.exception("Failed to query per-wiki user table for handle %s", handle)
         return None
 
     def _permissions_for_user(

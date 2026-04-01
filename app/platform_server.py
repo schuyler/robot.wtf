@@ -839,9 +839,10 @@ def _register_management_ui_routes(app, limiter):
 
         wiki_dir = os.path.join(wiki_base, slug)
         db_path = os.path.join(wiki_dir, "wiki.db")
-        owner_handle = user.handle.split(".")[0] if user.handle else None
+        owner_handle = user.handle if user.handle else None
+        owner_name = user.handle.split(".")[0] if user.handle else None
         try:
-            _init_wiki_db(db_path, site_name=display_name, site_description=purpose or None, owner_handle=owner_handle)
+            _init_wiki_db(db_path, site_name=display_name, site_description=purpose or None, owner_handle=owner_handle, owner_name=owner_name)
         except Exception:
             logger.warning("Failed to pre-initialize wiki DB at %s", db_path, exc_info=True)
 
