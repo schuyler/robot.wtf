@@ -327,7 +327,7 @@ class ManagementMiddleware:
             try:
                 self._wikis.delete(slug)
             except Exception:
-                pass
+                logger.debug("cleanup delete failed after repo init error", exc_info=True)
             return 500, {"error": "Failed to initialize wiki repository"}
 
         # Initialize per-wiki database, seeding the owner

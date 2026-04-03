@@ -67,7 +67,7 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def app(db_path, client_jwk, rsa_keys):
+def app(db_path, client_jwk, rsa_keys, platform_globals_patch):
     """Create the auth Flask app with test configuration."""
     jwk_path, _ = client_jwk
     key_path, _ = rsa_keys
@@ -514,7 +514,7 @@ class TestReturnToValidation:
         assert _is_safe_return_url("/app/") is True
         assert _is_safe_return_url("/auth/oauth/consent?client_id=x") is True
 
-    def test_return_to_accepts_wiki_subdomain(self):
+    def test_return_to_accepts_wiki_subdomain(self, platform_globals_patch):
         from app.platform_server import _is_safe_return_url
         assert _is_safe_return_url("https://foo.robot.wtf/Page") is True
         assert _is_safe_return_url("https://untangling-collective.robot.wtf/") is True

@@ -3,12 +3,15 @@
 Adapted from bluesky-social/cookbook (CC-0).
 """
 
+import logging
 import os
 import re
 import dns.resolver
 from typing import Optional, Tuple
 
 from app.auth.atproto_security import hardened_http, _ALLOW_HTTP_PDS
+
+logger = logging.getLogger(__name__)
 
 
 HANDLE_REGEX = r"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
@@ -75,15 +78,14 @@ def resolve_handle(handle: str) -> Optional[str]:
                 if is_valid_did(val):
                     return val
     except Exception as e:
-        print("DNS TXT handle resolution:", e)
-        pass
+        logger.debug("DNS TXT handle resolution: %s", e)
 
     # then try HTTP well-known
     try:
         with hardened_http.get_session() as sess:
             resp = sess.get(f"https://{handle}/.well-known/atproto-did")
     except Exception as e:
-        print("HTTP handle resolution:", e)
+        logger.warning("HTTP handle resolution: %s", e)
         return None
 
     if resp.status_code != 200:
@@ -102,7 +104,8 @@ def resolve_did(did: str) -> Optional[dict]:
         try:
             with hardened_http.get_session() as sess:
                 resp = sess.get(f"{plc_url}/{did}")
-        except Exception:
+        except Exception as e:
+            logger.warning("did:plc resolution failed for %s: %s", did, e)
             return None
         if resp.status_code != 200:
             return None
@@ -114,7 +117,8 @@ def resolve_did(did: str) -> Optional[dict]:
         try:
             with hardened_http.get_session() as sess:
                 resp = sess.get(f"https://{domain}/.well-known/did.json")
-        except Exception:
+        except Exception as e:
+            logger.warning("did:web resolution failed for %s: %s", did, e)
             return None
         if resp.status_code != 200:
             return None

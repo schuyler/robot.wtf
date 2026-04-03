@@ -5,6 +5,7 @@ Adapted from bluesky-social/cookbook (CC-0).
 
 from urllib.parse import urlparse
 from typing import Any, Tuple
+import logging
 import time
 import json
 from requests import Response
@@ -13,6 +14,8 @@ from authlib.common.security import generate_token
 from authlib.jose import jwt
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 from app.auth.atproto_security import is_safe_url, hardened_http, _ALLOW_HTTP_PDS
 
@@ -124,13 +127,13 @@ def is_use_dpop_nonce_error_response(resp: Response) -> bool:
             if scheme.lower() == "dpop" and params.get("error") == "use_dpop_nonce":
                 return True
         except Exception:
-            pass
+            logger.debug("WWW-Authenticate DPoP nonce parse failed", exc_info=True)
     try:
         json_body = resp.json()
         if isinstance(json_body, dict) and json_body.get("error") == "use_dpop_nonce":
             return True
     except Exception:
-        pass
+        logger.debug("DPoP nonce JSON parse failed", exc_info=True)
     return False
 
 

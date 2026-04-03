@@ -9,6 +9,13 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+)
 
 from app.auth.jwt import PlatformJWT, _load_keys
 from app.auth.middleware import AuthMiddleware

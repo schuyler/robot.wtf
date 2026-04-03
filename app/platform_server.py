@@ -319,8 +319,10 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
                         raw_handle = expired_claims.get("handle", "")
                         prefill_handle = re.sub(r"[^\x20-\x7e]", "", raw_handle)[:253]
                     except Exception:
+                        logger.debug("failed to extract handle from expired token", exc_info=True)
                         pass
                 except Exception:
+                    logger.debug("login cookie validation failed", exc_info=True)
                     pass
 
             if return_to:
@@ -355,6 +357,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
             try:
                 authserver_url = resolve_pds_authserver(initial_url)
             except Exception:
+                logger.debug("PDS authserver resolution failed, using initial URL", exc_info=True)
                 authserver_url = initial_url.rstrip("/")
         else:
             flash("Not a valid handle, DID, or auth server URL", "error")
@@ -571,6 +574,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
         try:
             claims = platform_jwt.validate_token(cookie_token)
         except Exception:
+            logger.debug("dashboard token validation failed", exc_info=True)
             return_path = request.full_path.rstrip("?")
             return redirect(f"/auth/login?return_to={quote(return_path, safe='/?=&')}")
 
@@ -626,6 +630,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
         try:
             claims = platform_jwt.validate_token(cookie_token)
         except Exception:
+            logger.debug("consent token validation failed", exc_info=True)
             abort(401, "Invalid platform token")
 
         if claims.get("sub") != payload.get("user_did"):
@@ -693,7 +698,7 @@ def _register_auth_routes(app, limiter, client_secret_jwk, client_pub_jwk, platf
                         )
                         db.commit()
             except Exception:
-                pass
+                logger.debug("logout session cleanup failed", exc_info=True)
 
         session.clear()
         resp = make_response(redirect(f"{_SCHEME}://{PLATFORM_DOMAIN}/"))
@@ -819,6 +824,7 @@ def _register_management_ui_routes(app, limiter):
                 mcp_token_hash=token_hash,
             )
         except Exception:
+            logger.debug("wiki slug already exists: %s", slug, exc_info=True)
             flash("A wiki with that slug already exists.", "danger")
             return redirect(url_for("wiki_create"))
 
@@ -833,7 +839,7 @@ def _register_management_ui_routes(app, limiter):
             try:
                 wiki_model.delete(slug)
             except Exception:
-                pass
+                logger.debug("cleanup delete failed after repo init error", exc_info=True)
             flash("Failed to initialize wiki repository.", "danger")
             return redirect(url_for("wiki_create"))
 
@@ -1055,6 +1061,7 @@ def _register_management_ui_routes(app, limiter):
             statuses = out.stdout.strip().split("\n")
             service_status = dict(zip(services, statuses))
         except Exception:
+            logger.debug("systemctl check failed", exc_info=True)
             service_status = {svc: "unknown" for svc in services}
 
         try:
@@ -1064,6 +1071,7 @@ def _register_management_ui_routes(app, limiter):
             disk_free_gb = disk.free / (1024 ** 3)
             disk_pct = int(disk.used / disk.total * 100) if disk.total else 0
         except Exception:
+            logger.debug("disk usage check failed", exc_info=True)
             disk_total_gb = disk_used_gb = disk_free_gb = 0.0
             disk_pct = 0
 
@@ -1072,15 +1080,18 @@ def _register_management_ui_routes(app, limiter):
         try:
             wiki_count = wiki_model.count()
         except Exception:
+            logger.debug("wiki count query failed", exc_info=True)
             wiki_count = 0
         try:
             user_count = user_model.count()
         except Exception:
+            logger.debug("user count query failed", exc_info=True)
             user_count = 0
 
         try:
             all_wikis = wiki_model.list_all()
         except Exception:
+            logger.debug("wiki list query failed", exc_info=True)
             all_wikis = []
 
         try:
@@ -1097,6 +1108,7 @@ def _register_management_ui_routes(app, limiter):
             )
             journal = proc.stdout
         except Exception:
+            logger.debug("journal tail failed", exc_info=True)
             journal = "(journal unavailable)"
 
         return render_template(
@@ -1254,7 +1266,7 @@ def create_app(
         consent_key = derive_signing_key(private_key)
         _auth_keys_loaded = True
     except Exception:
-        pass
+        logger.debug("failed to load auth keys on startup", exc_info=True)
 
     # Set up models and auth middleware (requires DB + keys)
     conn = None

@@ -298,7 +298,7 @@ def _swap_database(wiki_dir: str, is_public: bool = True, display_name: str = No
                 try:
                     engines[None].dispose()
                 except Exception:
-                    pass
+                    logger.debug("engine dispose failed during DB swap", exc_info=True)
             engines[None] = current_engine
             app.config["SQLALCHEMY_DATABASE_URI"] = old_uri
         logger.exception("Failed to swap database for wiki %s", wiki_dir)
