@@ -1137,7 +1137,8 @@ class TestAnonymousAndRegisteredAccess:
         start_response, calls = _capture_response()
         with patch.object(resolver, "_swap_storage"), \
              patch("app.resolver._swap_database"), \
-             patch("app.resolver._get_wiki_access_config", return_value=config):
+             patch("app.resolver._get_wiki_access_config", return_value=config), \
+             patch.object(resolver, "_get_per_wiki_user", return_value=None):
             resolver(environ, start_response)
         return calls, injected.get("HTTP_X_OTTERWIKI_PERMISSIONS", "")
 

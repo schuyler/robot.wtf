@@ -95,6 +95,7 @@ class AuthMiddleware:
         try:
             cookies.load(cookie_header)
         except Exception:
+            logger.debug("cookie parsing failed", exc_info=True)
             return None
 
         token_cookie = cookies.get("platform_token")

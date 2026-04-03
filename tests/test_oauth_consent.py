@@ -77,7 +77,7 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def app(db_path, client_jwk, rsa_keys):
+def app(db_path, client_jwk, rsa_keys, platform_globals_patch):
     """Create the auth Flask app with test configuration."""
     jwk_path, _ = client_jwk
     key_path, _ = rsa_keys

@@ -11,6 +11,47 @@ from app.models.user import UserModel
 from app.models.wiki import WikiModel
 
 
+@pytest.fixture
+def platform_globals_patch():
+    """Patch app.platform_server module-level globals to robot.wtf/https values.
+
+    The e2e session fixtures set PLATFORM_DOMAIN and ALLOW_HTTP_PDS env vars
+    before app.platform_server is first imported, poisoning module-level
+    constants (PLATFORM_DOMAIN, _SCHEME, CLIENT_ID, REDIRECT_URI, COOKIE_DOMAIN)
+    for the rest of the test session.
+
+    Unit test fixtures that create a platform Flask app must request this fixture
+    to restore the expected production-like values for their assertions.
+    """
+    import app.platform_server as ps
+    import app.auth.atproto_security as ats
+
+    saved = {
+        "PLATFORM_DOMAIN": ps.PLATFORM_DOMAIN,
+        "_SCHEME": ps._SCHEME,
+        "CLIENT_ID": ps.CLIENT_ID,
+        "REDIRECT_URI": ps.REDIRECT_URI,
+        "COOKIE_DOMAIN": ps.COOKIE_DOMAIN,
+        "_ALLOW_HTTP_PDS": ats._ALLOW_HTTP_PDS,
+    }
+
+    ps.PLATFORM_DOMAIN = "robot.wtf"
+    ps._SCHEME = "https"
+    ps.CLIENT_ID = "https://robot.wtf/auth/client-metadata.json"
+    ps.REDIRECT_URI = "https://robot.wtf/auth/callback"
+    ps.COOKIE_DOMAIN = ".robot.wtf"
+    ats._ALLOW_HTTP_PDS = False
+
+    yield
+
+    ps.PLATFORM_DOMAIN = saved["PLATFORM_DOMAIN"]
+    ps._SCHEME = saved["_SCHEME"]
+    ps.CLIENT_ID = saved["CLIENT_ID"]
+    ps.REDIRECT_URI = saved["REDIRECT_URI"]
+    ps.COOKIE_DOMAIN = saved["COOKIE_DOMAIN"]
+    ats._ALLOW_HTTP_PDS = saved["_ALLOW_HTTP_PDS"]
+
+
 @pytest.fixture(autouse=True)
 def reset_rate_limiters():
     """Reset module-level rate limiter singletons between tests.
