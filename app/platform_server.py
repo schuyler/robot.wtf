@@ -100,7 +100,7 @@ COOKIE_DOMAIN = (
     else os.environ.get("COOKIE_DOMAIN", f".{PLATFORM_DOMAIN}")
 )
 COOKIE_NAME = "platform_token"
-COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours
+COOKIE_MAX_AGE = 14 * 24 * 60 * 60  # 14 days
 
 # Identity-only scope — we just need to prove the user owns a DID
 OAUTH_SCOPE = "atproto"

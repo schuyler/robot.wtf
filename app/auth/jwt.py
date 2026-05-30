@@ -12,8 +12,8 @@ from typing import Any
 
 import jwt
 
-# Default token lifetime: 24 hours
-DEFAULT_TOKEN_LIFETIME = timedelta(hours=24)
+# Default token lifetime: 14 days
+DEFAULT_TOKEN_LIFETIME = timedelta(days=14)
 
 # JWT issuer and audience
 ISSUER = "robot.wtf"
