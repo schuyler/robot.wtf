@@ -23,10 +23,12 @@ Permission flow:
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import mimetypes
 import os
+import re
 import subprocess
 from typing import Any, Callable
 from urllib.parse import quote
@@ -162,6 +164,8 @@ def _init_wiki_db(
             # override per-wiki via the admin UI.
             ("SITE_ICON", "/platform/robot.wtf.svg"),
             ("SITE_LOGO", "/platform/robot.wtf.svg"),
+            # Git-over-HTTPS: disabled by default; owner opts in per-wiki.
+            ("GIT_WEB_SERVER", "False"),
         ]
         for name, value in platform_preferences:
             conn.execute(
@@ -500,11 +504,15 @@ def _is_write_request(method: str, path: str) -> bool:
         return True
     if "/rename" in path:
         return True
+    # Git write paths: receive-pack is a push (write); upload-pack is a fetch (read)
+    if method == "POST" and path.endswith("git-receive-pack"):
+        return True
     return False
 
 
 def _error_response(
-    start_response: Callable, status_code: int, message: str
+    start_response: Callable, status_code: int, message: str,
+    extra_headers: dict | None = None,
 ) -> list[bytes]:
     """Return a JSON error response."""
     body = json.dumps({"error": message})
@@ -518,10 +526,10 @@ def _error_response(
         500: "500 Internal Server Error",
     }
     status = status_map.get(status_code, f"{status_code} Error")
-    start_response(
-        status,
-        [("Content-Type", "application/json"), ("Content-Length", str(len(body)))],
-    )
+    headers = [("Content-Type", "application/json"), ("Content-Length", str(len(body)))]
+    if extra_headers:
+        headers.extend(extra_headers.items())
+    start_response(status, headers)
     return [body.encode("utf-8")]
 
 
@@ -705,7 +713,7 @@ class TenantResolver:
             if e.status == 403 and _is_browser_request(environ):
                 login_url = _build_login_url(environ)
                 return _redirect_response(start_response, login_url)
-            return _error_response(start_response, e.status, e.message)
+            return _error_response(start_response, e.status, e.message, extra_headers=e.headers)
 
         # Strip write permissions for web UI writes when over quota
         if over_quota and _is_write_request(method, path) and not path.startswith("/api/"):
@@ -753,7 +761,17 @@ class TenantResolver:
         if api_key:
             environ["HTTP_AUTHORIZATION"] = f"Bearer {api_key}"
 
-        return self._app(environ, start_response)
+        result = self._app(environ, start_response)
+
+        # After a git push, immediately refresh quota state so the next request
+        # sees the correct usage without waiting for the 15-minute cron.
+        if method == "POST" and path.endswith("git-receive-pack"):
+            try:
+                self._recompute_wiki_usage(wiki_slug, wiki)
+            except Exception:
+                logger.exception("Failed to recompute wiki usage after git push")
+
+        return result
 
     def _get_per_wiki_user(self, handle: str) -> dict | None:
         """Query per-wiki user table for a handle. Returns user dict or None.
@@ -821,11 +839,62 @@ class TenantResolver:
         """Resolve authentication and authorization.
 
         Paths:
+        0. Git smart-HTTP — Basic auth on /.git/ paths (per-wiki opt-in)
         1. Bearer token (MCP) — opaque token, no dots → get_by_token()
         2. Platform JWT — three dot-separated segments
         3. Cookie — platform_token cookie
         4. Anonymous — no credentials
         """
+        # Git smart-HTTP branch: intercept /.git/ paths before normal auth.
+        path_info = environ.get("PATH_INFO", "")
+        if re.match(r"^/\.git(/|$)", path_info):
+            # Check per-wiki opt-in from otterwiki Flask config (set by _swap_database).
+            # If otterwiki isn't importable in this context (e.g. test environment
+            # without SECRET_KEY), fall through to normal auth.
+            git_enabled = None
+            try:
+                import otterwiki.server as _ow_server  # noqa: PLC0415
+                git_enabled = _ow_server.app.config.get("GIT_WEB_SERVER", False)
+            except (Exception, SystemExit):
+                git_enabled = None
+
+            if git_enabled is not None:
+                if not git_enabled:
+                    raise AuthError("Not Found", status=404)
+
+                # GIT_WEB_SERVER is enabled — require authentication.
+                www_auth = {"WWW-Authenticate": f'Basic realm="{wiki_slug}"'}
+                auth_header = environ.get("HTTP_AUTHORIZATION")
+
+                if not auth_header:
+                    raise AuthError("Authentication required", status=401, headers=www_auth)
+
+                auth_parts = auth_header.split(" ", 1)
+                if len(auth_parts) != 2:
+                    raise AuthError("Authentication required", status=401, headers=www_auth)
+
+                scheme = auth_parts[0].lower()
+                if scheme == "basic":
+                    try:
+                        decoded = base64.b64decode(auth_parts[1]).decode("utf-8", errors="replace")
+                        _, _, token = decoded.partition(":")
+                    except Exception:
+                        raise AuthError("Authentication required", status=401, headers=www_auth)
+                elif scheme == "bearer":
+                    token = auth_parts[1]
+                else:
+                    raise AuthError("Authentication required", status=401, headers=www_auth)
+
+                # Resolve the token (password field for Basic, token for Bearer).
+                try:
+                    return self._resolve_bearer_token(token, wiki_slug=wiki_slug)
+                except AuthError as inner:
+                    if inner.status == 401:
+                        # Unknown token — re-prompt with WWW-Authenticate.
+                        raise AuthError(inner.message, status=401, headers=www_auth)
+                    # 403 (slug mismatch) — no re-prompt, propagate unchanged.
+                    raise
+
         authorization = environ.get("HTTP_AUTHORIZATION")
 
         if authorization:
@@ -928,6 +997,39 @@ class TenantResolver:
             "is_authenticated": True,
             "is_bearer_token": True,
         }
+
+    def _recompute_wiki_usage(self, wiki_slug: str, wiki: dict[str, Any]) -> None:
+        """Recompute disk_usage_bytes and page_count for a wiki and persist them.
+
+        Mirrors the quota cron (ansible/roles/quota/templates/wiki-quota.sh.j2):
+        - disk_usage_bytes: total byte size of everything under the wiki directory
+        - page_count: number of *.md files under repo/ (excluding .git/)
+
+        Called after a successful git-receive-pack push so quota state is
+        refreshed immediately rather than waiting for the 15-minute cron.
+        """
+        repo_path = wiki.get("repo_path", os.path.join(WIKI_BASE, wiki_slug, "repo"))
+        wiki_dir = os.path.dirname(repo_path)
+
+        # Total byte size of the wiki directory (all files, including .git).
+        # Mirrors `du -sb <wiki_dir>` used by the quota cron; pack objects
+        # live in .git/objects and must be counted to prevent quota bypass.
+        disk_usage_bytes = 0
+        for root, dirs, files in os.walk(wiki_dir):
+            for filename in files:
+                filepath = os.path.join(root, filename)
+                try:
+                    disk_usage_bytes += os.path.getsize(filepath)
+                except OSError:
+                    pass
+
+        # Count .md files under repo/ (excluding .git/)
+        page_count = 0
+        for root, dirs, files in os.walk(repo_path):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            page_count += sum(1 for f in files if f.endswith(".md"))
+
+        self._wikis.update(wiki_slug, disk_usage_bytes=disk_usage_bytes, page_count=page_count)
 
     def _swap_storage(self, repo_path: str) -> None:
         """Swap otterwiki module-level singletons for this tenant's wiki.

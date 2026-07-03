@@ -137,10 +137,11 @@ class AuthMiddleware:
 class AuthError(Exception):
     """Authentication error with HTTP status code."""
 
-    def __init__(self, message: str, status: int = 401):
+    def __init__(self, message: str, status: int = 401, headers: dict | None = None):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.headers = headers
 
     def to_response(self) -> dict[str, Any]:
         """Convert to a JSON-serializable error response."""

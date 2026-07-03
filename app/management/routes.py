@@ -9,11 +9,13 @@ Authorization header (except /api/auth/callback).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 from typing import Any, Callable
 
@@ -68,6 +70,7 @@ _AUTH_CALLBACK = re.compile(r"^/api/auth/callback$")
 _WIKIS_COLLECTION = re.compile(r"^/api/wikis$")
 _WIKI_DETAIL = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)$")
 _WIKI_TOKEN = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)/token$")
+_WIKI_GIT = re.compile(r"^/api/wikis/([a-zA-Z0-9_-]+)/git$")
 
 # Base path for wiki repos
 WIKI_BASE = "/srv/data/wikis"
@@ -249,6 +252,13 @@ class ManagementMiddleware:
                 return self._regenerate_token(user, slug)
             return 405, {"error": "Method not allowed"}
 
+        m = _WIKI_GIT.match(path)
+        if m:
+            slug = m.group(1)
+            if method == "POST":
+                return self._toggle_git(user, slug, environ)
+            return 405, {"error": "Method not allowed"}
+
         m = _WIKI_DETAIL.match(path)
         if m:
             slug = m.group(1)
@@ -365,8 +375,24 @@ class ManagementMiddleware:
         if wiki["owner_did"] != user.user_did:
             return 403, {"error": "Access denied"}
 
+        # Read git_access_enabled from per-wiki wiki.db
+        repo_path = wiki.get("repo_path", "")
+        wiki_dir = os.path.dirname(repo_path) if repo_path else ""
+        git_access_enabled = False
+        if wiki_dir:
+            db_path = os.path.join(wiki_dir, "wiki.db")
+            try:
+                with contextlib.closing(sqlite3.connect(db_path)) as conn:
+                    row = conn.execute(
+                        "SELECT value FROM preferences WHERE name = 'GIT_WEB_SERVER'"
+                    ).fetchone()
+                if row:
+                    git_access_enabled = row[0].lower() in ("true", "1")
+            except Exception:
+                pass
+
         return 200, {
-            "wiki": wiki,
+            "wiki": {**wiki, "git_access_enabled": git_access_enabled},
             "mcp_endpoint": f"https://{slug}.robot.wtf/mcp",
         }
 
@@ -416,6 +442,41 @@ class ManagementMiddleware:
         self._wikis.update(slug, mcp_token_hash=token_hash)
 
         return 200, {"mcp_token": plaintext_token}
+
+    def _toggle_git(
+        self, user: AuthenticatedUser, slug: str, environ: dict
+    ) -> tuple[int, dict]:
+        """POST /api/wikis/{slug}/git — enable or disable git-over-HTTPS access."""
+        wiki = self._wikis.get(slug)
+        if not wiki:
+            return 404, {"error": "Wiki not found"}
+
+        if wiki.get("owner_did") != user.user_did:
+            return 403, {"error": "Only the owner can change git access settings"}
+
+        body = _read_json_body(environ)
+        enabled = bool(body.get("enabled", False))
+        value = "True" if enabled else "False"
+
+        repo_path = wiki.get("repo_path", "")
+        wiki_dir = os.path.dirname(repo_path) if repo_path else ""
+        if not wiki_dir:
+            return 500, {"error": "Wiki directory not configured"}
+
+        db_path = os.path.join(wiki_dir, "wiki.db")
+        try:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    "INSERT INTO preferences (name, value) VALUES (?, ?)"
+                    " ON CONFLICT(name) DO UPDATE SET value=excluded.value",
+                    ("GIT_WEB_SERVER", value),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to update GIT_WEB_SERVER preference: %s", e)
+            return 500, {"error": "Failed to update git access setting"}
+
+        return 200, {"git_access_enabled": enabled}
 
 # --- Helpers ---
 
