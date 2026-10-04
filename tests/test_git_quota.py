@@ -121,6 +121,7 @@ def _run(resolver, environ, git_web_server=None):
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch.object(resolver, "_swap_storage"))
         stack.enter_context(patch("app.resolver._swap_database"))
+        stack.enter_context(patch("app.resolver._disable_repo_symlinks"))
         stack.enter_context(
             patch("app.resolver._get_wiki_access_config", return_value=_PUBLIC_CONFIG)
         )

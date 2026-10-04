@@ -30,6 +30,7 @@ import mimetypes
 import os
 import re
 import subprocess
+import time
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -492,6 +493,96 @@ def _parse_host(host: str) -> str | None:
     return subdomain
 
 
+_SYMLINK_CONFIG_ATTEMPTS = 3
+
+
+def _disable_repo_symlinks(repo_path: str) -> None:
+    """Set core.symlinks=false so pushed symlinks are checked out as plain files.
+
+    otterwiki's git server uses receive.denyCurrentBranch=updateInstead, which
+    checks pushed trees out into the working directory. otterwiki then reads
+    pages and serves attachments from that directory with open()/send_file(),
+    both of which follow symlinks. A pushed `leak.md -> /srv/data/signing_key.pem`
+    would therefore expose any file the service user can read. With
+    core.symlinks=false, git writes the link target as an ordinary file instead.
+
+    The setting is read first and only written when missing: reads take no
+    lock, and otterwiki rewrites this same config file (GitHttpServer.__init__)
+    on every tenant swap, so a write can transiently fail on config.lock.
+    Writes are retried a few times for that reason.
+
+    Raises subprocess.CalledProcessError if the setting still can't be
+    written, so callers can refuse the push rather than proceed unprotected.
+    """
+    config_file = os.path.join(repo_path, ".git", "config")
+    current = subprocess.run(
+        ["git", "config", "--file", config_file, "--bool", "--get", "core.symlinks"],
+        capture_output=True,
+        text=True,
+    )
+    if current.returncode == 0 and current.stdout.strip() == "false":
+        return
+
+    for attempt in range(_SYMLINK_CONFIG_ATTEMPTS):
+        try:
+            subprocess.run(
+                ["git", "config", "--file", config_file, "core.symlinks", "false"],
+                capture_output=True,
+                check=True,
+            )
+            return
+        except subprocess.CalledProcessError:
+            if attempt == _SYMLINK_CONFIG_ATTEMPTS - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
+class _PushSizeLimitedStream:
+    """wsgi.input wrapper that rejects a push body larger than `limit` bytes.
+
+    otterwiki reads the whole receive-pack body into memory with
+    stream.read(), and git clients send pushes over 1 MB chunked (no
+    Content-Length), so a Content-Length check alone can't bound them.
+    Raising RequestEntityTooLarge from inside the Flask view yields a 413.
+    """
+
+    _CHUNK = 64 * 1024
+
+    def __init__(self, stream: Any, limit: int):
+        self._stream = stream
+        self._limit = limit
+        self._read = 0
+
+    def _account(self, data: bytes) -> bytes:
+        self._read += len(data)
+        if self._read > self._limit:
+            from werkzeug.exceptions import RequestEntityTooLarge  # noqa: PLC0415
+            raise RequestEntityTooLarge("Push exceeds remaining wiki quota")
+        return data
+
+    def read(self, size: int = -1) -> bytes:
+        if size is not None and size >= 0:
+            return self._account(self._stream.read(size))
+        # Unbounded read: pull in chunks so an oversized body is rejected
+        # without first being buffered in full.
+        parts = []
+        while True:
+            chunk = self._account(self._stream.read(self._CHUNK))
+            if not chunk:
+                return b"".join(parts)
+            parts.append(chunk)
+
+    def readline(self, size: int = -1) -> bytes:
+        return self._account(self._stream.readline(size))
+
+    def __iter__(self):
+        while True:
+            line = self.readline()
+            if not line:
+                return
+            yield line
+
+
 def _is_write_request(method: str, path: str) -> bool:
     """Return True if the request would mutate wiki content."""
     if method not in ("POST", "PUT", "PATCH"):
@@ -761,11 +852,32 @@ class TenantResolver:
         if api_key:
             environ["HTTP_AUTHORIZATION"] = f"Bearer {api_key}"
 
+        is_git_push = method == "POST" and path.endswith("git-receive-pack")
+        if is_git_push:
+            # Bound the push to the remaining disk quota. The over-quota check
+            # above only sees usage from before this request.
+            remaining = max(QUOTA_BYTES - wiki.get("disk_usage_bytes", 0), 0)
+            content_length = environ.get("CONTENT_LENGTH") or ""
+            if content_length.isdigit() and int(content_length) > remaining:
+                return _error_response(
+                    start_response, 413, "Push exceeds remaining wiki quota"
+                )
+            environ["wsgi.input"] = _PushSizeLimitedStream(
+                environ.get("wsgi.input"), remaining
+            )
+
+            # Never let a push check out symlinks into the working tree.
+            try:
+                _disable_repo_symlinks(repo_path)
+            except Exception:
+                logger.exception("Failed to set core.symlinks=false for %s", repo_path)
+                return _error_response(start_response, 500, "Git push unavailable")
+
         result = self._app(environ, start_response)
 
         # After a git push, immediately refresh quota state so the next request
         # sees the correct usage without waiting for the 15-minute cron.
-        if method == "POST" and path.endswith("git-receive-pack"):
+        if is_git_push:
             try:
                 self._recompute_wiki_usage(wiki_slug, wiki)
             except Exception:

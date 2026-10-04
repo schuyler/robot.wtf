@@ -41,8 +41,18 @@ feature is disabled for a wiki, `/.git/*` returns 404 — no auth prompt.
 
 **Rate limiting and quotas.** Pushes count as writes. They're subject to the
 same 5/minute write rate limit and the 50 MB disk quota. An over-quota wiki
-rejects pushes. After a successful push, disk usage and page count are
-recomputed immediately (rather than waiting for the 15-minute quota cron).
+rejects pushes, and a single push whose body is bigger than the remaining
+quota gets a 413 (chunked pushes are cut off once they cross the line). After
+a successful push, disk usage and page count are recomputed immediately
+(rather than waiting for the 15-minute quota cron). The page-count limit is
+only checked before a push, so one push can still land a lot of pages.
+
+**Symlinks.** Every push sets `core.symlinks=false` on the wiki repo, so a
+pushed symlink is checked out as a plain file containing the link path. Without
+this, otterwiki would follow the link when reading the page and serve whatever
+file it points at. Repos that took pushes before this fix may still have real
+symlinks on disk; find them with
+`find /srv/data/wikis -path '*/.git' -prune -o -type l -print`.
 
 **Semantic search.** A push fires otterwiki's `repository_changed` hook, which
 triggers incremental reindexing of the changed `.md` files (adds/updates and
