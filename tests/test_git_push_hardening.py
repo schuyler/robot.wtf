@@ -86,6 +86,39 @@ class TestDisableRepoSymlinks:
         with pytest.raises(subprocess.CalledProcessError):
             _disable_repo_symlinks(str(tmp_path / "nope"))
 
+    def test_already_set_needs_no_lock(self, pushed_symlink):
+        """Once set, a concurrent writer holding config.lock can't fail the push."""
+        from app.resolver import _disable_repo_symlinks
+
+        server, _ = pushed_symlink
+        _disable_repo_symlinks(str(server))
+        (server / ".git" / "config.lock").touch()
+        _disable_repo_symlinks(str(server))  # must not raise
+
+    def test_lock_held_and_unset_raises_after_retries(self, pushed_symlink):
+        from app.resolver import _disable_repo_symlinks
+
+        server, _ = pushed_symlink
+        (server / ".git" / "config.lock").touch()
+        with patch("app.resolver.time.sleep"):
+            with pytest.raises(subprocess.CalledProcessError):
+                _disable_repo_symlinks(str(server))
+
+    def test_transient_lock_is_retried(self, pushed_symlink):
+        """A lock released between attempts lets the write succeed."""
+        from app.resolver import _disable_repo_symlinks
+
+        server, _ = pushed_symlink
+        lock = server / ".git" / "config.lock"
+        lock.touch()
+        with patch("app.resolver.time.sleep", side_effect=lambda _: lock.unlink()):
+            _disable_repo_symlinks(str(server))
+        out = subprocess.run(
+            ["git", "config", "--file", str(server / ".git" / "config"), "core.symlinks"],
+            capture_output=True, text=True, check=True,
+        )
+        assert out.stdout.strip() == "false"
+
 
 # ---------------------------------------------------------------------------
 # _PushSizeLimitedStream

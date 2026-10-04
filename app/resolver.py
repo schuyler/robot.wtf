@@ -30,6 +30,7 @@ import mimetypes
 import os
 import re
 import subprocess
+import time
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -492,6 +493,9 @@ def _parse_host(host: str) -> str | None:
     return subdomain
 
 
+_SYMLINK_CONFIG_ATTEMPTS = 3
+
+
 def _disable_repo_symlinks(repo_path: str) -> None:
     """Set core.symlinks=false so pushed symlinks are checked out as plain files.
 
@@ -502,21 +506,35 @@ def _disable_repo_symlinks(repo_path: str) -> None:
     would therefore expose any file the service user can read. With
     core.symlinks=false, git writes the link target as an ordinary file instead.
 
-    Raises subprocess.CalledProcessError if the config write fails, so callers
-    can refuse the push rather than proceed unprotected.
+    The setting is read first and only written when missing: reads take no
+    lock, and otterwiki rewrites this same config file (GitHttpServer.__init__)
+    on every tenant swap, so a write can transiently fail on config.lock.
+    Writes are retried a few times for that reason.
+
+    Raises subprocess.CalledProcessError if the setting still can't be
+    written, so callers can refuse the push rather than proceed unprotected.
     """
-    subprocess.run(
-        [
-            "git",
-            "config",
-            "--file",
-            os.path.join(repo_path, ".git", "config"),
-            "core.symlinks",
-            "false",
-        ],
+    config_file = os.path.join(repo_path, ".git", "config")
+    current = subprocess.run(
+        ["git", "config", "--file", config_file, "--bool", "--get", "core.symlinks"],
         capture_output=True,
-        check=True,
+        text=True,
     )
+    if current.returncode == 0 and current.stdout.strip() == "false":
+        return
+
+    for attempt in range(_SYMLINK_CONFIG_ATTEMPTS):
+        try:
+            subprocess.run(
+                ["git", "config", "--file", config_file, "core.symlinks", "false"],
+                capture_output=True,
+                check=True,
+            )
+            return
+        except subprocess.CalledProcessError:
+            if attempt == _SYMLINK_CONFIG_ATTEMPTS - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 class _PushSizeLimitedStream:
