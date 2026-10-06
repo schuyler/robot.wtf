@@ -8,3 +8,7 @@ dnspython>=2.6
 requests-hardened>=1.0.0b3
 numpy<2.4.0  # Proxmox VM lacks X86_V2 CPU features; numpy 2.4+ requires them
 Flask-Limiter>=3.5.0
+# MCP sidecar (otterwiki-mcp). Deploy installs that package with --no-deps, so
+# its runtime dependencies must be declared here. mcp comes in via fastmcp.
+fastmcp>=4.0
+httpx>=0.27
