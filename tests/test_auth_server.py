@@ -646,7 +646,7 @@ class TestFlaskSecretKeyEnforcement:
         os.environ["SIGNING_KEY_PATH"] = key_path
         os.environ["ROBOT_DB_PATH"] = db_path
         saved = os.environ.pop("FLASK_SECRET_KEY", None)
-        os.environ.pop("FLASK_ENV", None)  # not testing mode
+        saved_env = os.environ.pop("FLASK_ENV", None)  # not testing mode
         try:
             from app.platform_server import create_app
             with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
@@ -658,6 +658,8 @@ class TestFlaskSecretKeyEnforcement:
         finally:
             if saved is not None:
                 os.environ["FLASK_SECRET_KEY"] = saved
+            if saved_env is not None:
+                os.environ["FLASK_ENV"] = saved_env
 
     def test_dev_default_secret_key_raises_in_production(self, db_path, client_jwk, rsa_keys):
         """create_app() with the dev-default key raises RuntimeError."""
@@ -718,7 +720,7 @@ class TestRateLimiting:
     """
 
     @pytest.fixture
-    def rate_limit_app(self, db_path, client_jwk, rsa_keys):
+    def rate_limit_app(self, db_path, client_jwk, rsa_keys, monkeypatch):
         """Auth app with rate limiting enabled (overrides TESTING=True disabling)."""
         jwk_path, _ = client_jwk
         key_path, _ = rsa_keys
@@ -728,6 +730,7 @@ class TestRateLimiting:
         os.environ["SIGNING_KEY_PATH"] = key_path
         os.environ["PLATFORM_DOMAIN"] = "robot.wtf"
         os.environ["FLASK_SECRET_KEY"] = "test-secret"
+        monkeypatch.delenv("FLASK_ENV", raising=False)
 
         from app.platform_server import create_app
         application = create_app(

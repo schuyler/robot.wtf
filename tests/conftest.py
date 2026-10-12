@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pytest
+
+os.environ.setdefault("FLASK_ENV", "testing")
 
 from app.db import init_schema
 from app.models.user import UserModel

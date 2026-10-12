@@ -41,11 +41,13 @@
     virtualenv: /srv/app/venv
     virtualenv_python: python3
 
-# Version must match the fastmcp pin in requirements.txt. fastmcp and fastmcp-slim share
+# requirements.txt holds the single fastmcp pin. fastmcp and fastmcp-slim share
 # site-packages/fastmcp/; an in-place upgrade from 3.x deletes slim's __init__.py.
 - name: Reinstall fastmcp-slim to restore fastmcp/__init__.py
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall fastmcp-slim==4.0.11
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall fastmcp-slim=={{ fastmcp_version }}
+  vars:
+    fastmcp_version: "{{ lookup('file', playbook_dir ~ '/../requirements.txt') | regex_search('^fastmcp==(\\S+)', '\\1', multiline=True) | first }}"
   changed_when: true
   notify: restart robot services
 
