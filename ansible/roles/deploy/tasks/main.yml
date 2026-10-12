@@ -41,6 +41,14 @@
     virtualenv: /srv/app/venv
     virtualenv_python: python3
 
+# Version must match the fastmcp pin in requirements.txt. fastmcp and fastmcp-slim share
+# site-packages/fastmcp/; an in-place upgrade from 3.x deletes slim's __init__.py.
+- name: Reinstall fastmcp-slim to restore fastmcp/__init__.py
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall fastmcp-slim==4.0.11
+  changed_when: true
+  notify: restart robot services
+
 - name: Install otterwiki from wikibot-io fork
   ansible.builtin.command:
     cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki --force-reinstall 'git+https://github.com/schuyler/otterwiki.git@wikibot-io'
