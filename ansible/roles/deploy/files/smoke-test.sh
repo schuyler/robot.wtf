@@ -31,6 +31,30 @@ wait_for_service() {
     return 1
 }
 
+# The MCP sidecar must be active and serving its OAuth metadata. The path
+# carries the /mcp suffix; the bare path 404s on a healthy fastmcp 4.x sidecar.
+MCP_META_URL="http://localhost:8001/.well-known/oauth-protected-resource/mcp"
+
+mcp_serving() {
+    systemctl is-active --quiet robot-mcp &&
+        curl -s --max-time 5 "$MCP_META_URL" 2>/dev/null | grep -q '"authorization_servers"'
+}
+
+# Wait up to 30s for robot-mcp to serve, then confirm it is still serving after
+# a pause, so a unit that starts and crashes (auto-restart) does not pass.
+wait_for_mcp() {
+    local deadline=$((SECONDS + 30))
+
+    while [ $SECONDS -lt $deadline ]; do
+        if mcp_serving; then
+            sleep 3
+            mcp_serving && return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # A. Service liveness
 # ---------------------------------------------------------------------------
@@ -47,7 +71,13 @@ platform_alive=false
 for svc in robot-otterwiki robot-mcp robot-platform; do
     port="${SERVICES[$svc]}"
 
-    if wait_for_service "$svc" "$port"; then
+    if [ "$svc" = "robot-mcp" ]; then
+        wait_cmd=(wait_for_mcp)
+    else
+        wait_cmd=(wait_for_service "$svc" "$port")
+    fi
+
+    if "${wait_cmd[@]}"; then
         pass "${svc} (port ${port}): active and responding"
         [ "$svc" = "robot-platform" ] && platform_alive=true
     else
@@ -107,16 +137,10 @@ fi
 # C. MCP OAuth metadata (port 8001)
 # ---------------------------------------------------------------------------
 
-mcp_tmp="$(mktemp)"
-mcp_status="$(curl -s -o "$mcp_tmp" -w "%{http_code}" --max-time 5 \
-    http://localhost:8001/.well-known/oauth-protected-resource 2>/dev/null || echo "000")"
-mcp_meta="$(cat "$mcp_tmp")"
-rm -f "$mcp_tmp"
-if [[ ! "$mcp_status" =~ ^[5] ]] && [ "$mcp_status" != "000" ] && echo "$mcp_meta" | grep -q '"authorization_servers"'; then
-    pass "robot-mcp /.well-known/oauth-protected-resource: ${mcp_status} with authorization_servers"
+if mcp_serving; then
+    pass "robot-mcp /.well-known/oauth-protected-resource/mcp: serving authorization_servers"
 else
-    # MCP well-known may not be served on bare localhost (requires wiki Host header)
-    echo "  WARN: robot-mcp /.well-known/oauth-protected-resource: status=${mcp_status} (non-fatal)"
+    fail "robot-mcp /.well-known/oauth-protected-resource/mcp: not serving authorization_servers"
 fi
 
 # ---------------------------------------------------------------------------
