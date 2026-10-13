@@ -953,20 +953,20 @@ class TestAdminStats:
 class TestRateLimiting:
     """Management UI rate limiting.
 
-    Flask-Limiter disables itself when TESTING=True. To exercise rate limits,
-    we must set RATELIMIT_ENABLED=True explicitly in the app config.
+    create_app() constructs the Limiter with enabled=(FLASK_ENV != "testing"),
+    so the fixture unsets FLASK_ENV before building the app.
     """
 
     @pytest.fixture
-    def rate_limit_app(self, rsa_keys, user_model, wiki_model, platform_jwt, tmp_path):
+    def rate_limit_app(self, rsa_keys, user_model, wiki_model, platform_jwt, tmp_path, monkeypatch):
         """Management UI app with rate limiting enabled."""
         import os
         os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
+        monkeypatch.delenv("FLASK_ENV", raising=False)
         from app.platform_server import create_app as _create_flask_app
 
         app = _create_flask_app()
         app.config["TESTING"] = True
-        app.config["RATELIMIT_ENABLED"] = True
 
         private_key, public_key = rsa_keys
         from app.auth.middleware import AuthMiddleware
