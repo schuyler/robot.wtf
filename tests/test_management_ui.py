@@ -125,10 +125,9 @@ def collab_token(platform_jwt, collab_user):
 
 
 @pytest.fixture
-def flask_app(rsa_keys, user_model, wiki_model, platform_jwt, tmp_path, platform_globals_patch):
+def flask_app(rsa_keys, user_model, wiki_model, platform_jwt, tmp_path, platform_globals_patch, monkeypatch):
     """Create a configured Flask test app."""
-    import os
-    os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
+    monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret-management-ui")
     from app.platform_server import create_app as _create_flask_app
 
     app = _create_flask_app()
@@ -960,8 +959,7 @@ class TestRateLimiting:
     @pytest.fixture
     def rate_limit_app(self, rsa_keys, user_model, wiki_model, platform_jwt, tmp_path, monkeypatch):
         """Management UI app with rate limiting enabled."""
-        import os
-        os.environ["FLASK_SECRET_KEY"] = "test-secret-management-ui"
+        monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret-management-ui")
         monkeypatch.delenv("FLASK_ENV", raising=False)
         from app.platform_server import create_app as _create_flask_app
 
@@ -979,9 +977,7 @@ class TestRateLimiting:
         app.config["WIKI_MODEL"] = wiki_model
         app.config["WIKI_BASE"] = str(tmp_path / "wikis")
 
-        yield app
-
-        os.environ.pop("FLASK_SECRET_KEY", None)
+        return app
 
     @pytest.fixture
     def rate_limit_client(self, rate_limit_app):

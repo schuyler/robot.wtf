@@ -469,7 +469,6 @@ class TestCreateWikiCleanupLogging:
 # ===========================================================================
 
 import json as _json
-import os as _os
 import sqlite3 as _sqlite3
 
 import pytest as _pytest
@@ -536,7 +535,7 @@ def _signing_key_path(tmp_path, _platform_rsa_keys):
 
 
 @_pytest.fixture
-def _flask_app(_platform_db, _client_jwk_path, _signing_key_path):
+def _flask_app(_platform_db, _client_jwk_path, _signing_key_path, monkeypatch):
     """Full platform Flask app wired with test keys and in-memory DB.
 
     Sets env vars before importing app.platform_server so the module-level
@@ -546,11 +545,12 @@ def _flask_app(_platform_db, _client_jwk_path, _signing_key_path):
     have set the vars).
     """
     # Set env vars FIRST — platform_server.py runs create_app() at import time.
-    _os.environ["FLASK_SECRET_KEY"] = "test-secret-platform-logging"
-    _os.environ["FLASK_ENV"] = "testing"
-    _os.environ["ROBOT_DB_PATH"] = _platform_db
-    _os.environ["CLIENT_JWK_PATH"] = _client_jwk_path
-    _os.environ["SIGNING_KEY_PATH"] = _signing_key_path
+    # create_app also writes the three path vars; setting them via monkeypatch
+    # makes teardown restore them.
+    monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret-platform-logging")
+    monkeypatch.setenv("ROBOT_DB_PATH", _platform_db)
+    monkeypatch.setenv("CLIENT_JWK_PATH", _client_jwk_path)
+    monkeypatch.setenv("SIGNING_KEY_PATH", _signing_key_path)
 
     import app.platform_server as _ps
     import app.auth.atproto_security as _ats
@@ -588,10 +588,6 @@ def _flask_app(_platform_db, _client_jwk_path, _signing_key_path):
     _ps.REDIRECT_URI = _saved["REDIRECT_URI"]
     _ps.COOKIE_DOMAIN = _saved["COOKIE_DOMAIN"]
     _ats._ALLOW_HTTP_PDS = _saved["_ALLOW_HTTP_PDS"]
-
-    for key in ["FLASK_SECRET_KEY", "FLASK_ENV", "ROBOT_DB_PATH",
-                "CLIENT_JWK_PATH", "SIGNING_KEY_PATH"]:
-        _os.environ.pop(key, None)
 
 
 @_pytest.fixture
@@ -1270,13 +1266,11 @@ class TestPlatformStartupKeyLoading:
     calling create_app() with missing key files and checking for a DEBUG log.
     """
 
-    def test_key_loading_failure_logs_debug(self, tmp_path, caplog):
+    def test_key_loading_failure_logs_debug(self, tmp_path, caplog, monkeypatch):
         """Handler 15 (line 1256): key-loading exception must log DEBUG.
 
         FAILS until platform_server.py line 1256 except block adds logger.debug().
         """
-        import os
-
         # Set up a valid DB and Flask secret so create_app() can proceed,
         # but deliberately omit the key files so _load_keys() raises.
         db_path = str(tmp_path / "startup_test.db")
@@ -1286,25 +1280,19 @@ class TestPlatformStartupKeyLoading:
         _init_schema(conn)
         conn.close()
 
-        os.environ["FLASK_SECRET_KEY"] = "test-secret-startup"
-        os.environ["FLASK_ENV"] = "testing"
-        os.environ["ROBOT_DB_PATH"] = db_path
+        monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret-startup")
+        monkeypatch.setenv("ROBOT_DB_PATH", db_path)
         # Deliberately point CLIENT_JWK_PATH and SIGNING_KEY_PATH at nonexistent files.
-        os.environ["CLIENT_JWK_PATH"] = str(tmp_path / "nonexistent_client.json")
-        os.environ["SIGNING_KEY_PATH"] = str(tmp_path / "nonexistent_key.pem")
+        monkeypatch.setenv("CLIENT_JWK_PATH", str(tmp_path / "nonexistent_client.json"))
+        monkeypatch.setenv("SIGNING_KEY_PATH", str(tmp_path / "nonexistent_key.pem"))
 
-        try:
-            from app.platform_server import create_app
-            with caplog.at_level(logging.DEBUG, logger="app.platform_server"):
-                app = create_app(
-                    db_path=db_path,
-                    client_jwk_path=str(tmp_path / "nonexistent_client.json"),
-                    signing_key_path=str(tmp_path / "nonexistent_key.pem"),
-                )
-        finally:
-            for key in ["FLASK_SECRET_KEY", "FLASK_ENV", "ROBOT_DB_PATH",
-                        "CLIENT_JWK_PATH", "SIGNING_KEY_PATH"]:
-                os.environ.pop(key, None)
+        from app.platform_server import create_app
+        with caplog.at_level(logging.DEBUG, logger="app.platform_server"):
+            app = create_app(
+                db_path=db_path,
+                client_jwk_path=str(tmp_path / "nonexistent_client.json"),
+                signing_key_path=str(tmp_path / "nonexistent_key.pem"),
+            )
 
         debug_msgs = [
             r for r in caplog.records

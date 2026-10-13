@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -77,16 +76,18 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def app(db_path, client_jwk, rsa_keys, platform_globals_patch):
+def app(db_path, client_jwk, rsa_keys, platform_globals_patch, monkeypatch):
     """Create the auth Flask app with test configuration."""
     jwk_path, _ = client_jwk
     key_path, _ = rsa_keys
 
-    os.environ["ROBOT_DB_PATH"] = db_path
-    os.environ["CLIENT_JWK_PATH"] = jwk_path
-    os.environ["SIGNING_KEY_PATH"] = key_path
-    os.environ["PLATFORM_DOMAIN"] = "robot.wtf"
-    os.environ["FLASK_SECRET_KEY"] = "test-secret"
+    # create_app also writes the three path vars; setting them via monkeypatch
+    # makes teardown restore them.
+    monkeypatch.setenv("ROBOT_DB_PATH", db_path)
+    monkeypatch.setenv("CLIENT_JWK_PATH", jwk_path)
+    monkeypatch.setenv("SIGNING_KEY_PATH", key_path)
+    monkeypatch.setenv("PLATFORM_DOMAIN", "robot.wtf")
+    monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret")
 
     from app.platform_server import create_app
     application = create_app(
@@ -95,11 +96,7 @@ def app(db_path, client_jwk, rsa_keys, platform_globals_patch):
         signing_key_path=key_path,
     )
     application.config["TESTING"] = True
-    yield application
-
-    for key in ["ROBOT_DB_PATH", "CLIENT_JWK_PATH", "SIGNING_KEY_PATH",
-                "FLASK_SECRET_KEY"]:
-        os.environ.pop(key, None)
+    return application
 
 
 @pytest.fixture
