@@ -719,6 +719,169 @@ class TestContextProcessor:
         assert "domain-wiki.robot.wtf" in html
 
 
+# --- Non-owner per-wiki admin tests ---
+
+
+def _add_wiki_user(flask_app, slug, handle, is_admin):
+    """Insert a per-wiki user; the resolver looks users up by email "@" + handle."""
+    db_path = os.path.join(flask_app.config["WIKI_BASE"], slug, "wiki.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            'INSERT INTO "user" (name, email, is_approved, is_admin) VALUES (?, ?, 1, ?)',
+            ("Collab", f"@{handle}", int(is_admin)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestNonOwnerAdmin:
+    @pytest.fixture
+    def shared_wiki(self, client, owner_token, owner_user):
+        """Wiki 'shared' created by the owner through the UI (real wiki.db)."""
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+        with patch("app.platform_server._init_wiki_repo"):
+            client.post(
+                "/app/create",
+                data={"slug": "shared", "display_name": "Shared Wiki"},
+            )
+        return "shared"
+
+    @pytest.fixture
+    def collab_client(self, flask_app, collab_token, collab_user):
+        """Separate client so the owner's session (one-time token) is not shared."""
+        c = flask_app.test_client()
+        c.set_cookie("platform_token", collab_token, domain="localhost")
+        return c
+
+    def test_dashboard_redirects_admin_to_administered_wiki(
+        self, flask_app, collab_client, shared_wiki
+    ):
+        _add_wiki_user(flask_app, shared_wiki, "collab.bsky.social", True)
+        resp = collab_client.get("/app/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers["Location"].endswith("/app/wiki/shared")
+
+    def test_sidebar_lists_administered_wiki(
+        self, flask_app, collab_client, shared_wiki
+    ):
+        _add_wiki_user(flask_app, shared_wiki, "collab.bsky.social", True)
+        resp = collab_client.get("/app/wiki/shared")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'href="/app/wiki/shared"' in html
+        assert "Shared Wiki" in html
+
+    def test_admin_settings_page_is_view_only(
+        self, flask_app, collab_client, shared_wiki
+    ):
+        _add_wiki_user(flask_app, shared_wiki, "collab.bsky.social", True)
+        resp = collab_client.get("/app/wiki/shared")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "https://shared.robot.wtf/mcp" in html
+        assert "custom connector" in html.lower()
+        assert "claude mcp add --transport http shared https://shared.robot.wtf/mcp" in html
+        assert "Regenerate token" not in html
+        assert "Authorization: Bearer" not in html
+        assert "Danger zone" not in html
+        assert 'action="/app/wiki/shared/settings"' not in html
+        assert 'action="/app/wiki/shared/mcp/regenerate"' not in html
+        assert 'action="/app/wiki/shared/delete"' not in html
+
+    def test_owner_settings_page_shows_owner_controls(
+        self, client, shared_wiki
+    ):
+        html = client.get("/app/wiki/shared").data.decode()
+        assert "custom connector" in html.lower()
+        assert "claude mcp add --transport http shared https://shared.robot.wtf/mcp" in html
+        assert "Authorization: Bearer" in html
+        assert 'action="/app/wiki/shared/settings"' in html
+        assert 'action="/app/wiki/shared/mcp/regenerate"' in html
+        assert 'action="/app/wiki/shared/delete"' in html
+
+    def test_admin_cannot_rename_regenerate_or_delete(
+        self, flask_app, collab_client, shared_wiki, wiki_model
+    ):
+        _add_wiki_user(flask_app, shared_wiki, "collab.bsky.social", True)
+        before = wiki_model.get("shared")
+
+        for path, data in [
+            ("/app/wiki/shared/settings", {"display_name": "Hijacked"}),
+            ("/app/wiki/shared/mcp/regenerate", {}),
+            ("/app/wiki/shared/delete", {"confirm_slug": "shared"}),
+        ]:
+            resp = collab_client.post(path, data=data, follow_redirects=False)
+            assert resp.status_code == 302, path
+
+        after = wiki_model.get("shared")
+        assert after is not None
+        assert after["display_name"] == before["display_name"]
+        assert after["mcp_token_hash"] == before["mcp_token_hash"]
+
+    def test_non_admin_wiki_user_sees_no_change(
+        self, flask_app, collab_client, shared_wiki
+    ):
+        _add_wiki_user(flask_app, shared_wiki, "collab.bsky.social", False)
+        resp = collab_client.get("/app/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers["Location"].endswith("/app/create")
+        resp = collab_client.get("/app/wiki/shared", follow_redirects=False)
+        assert resp.status_code == 302
+
+    def test_administered_wiki_not_counted_or_deleted_with_account(
+        self, flask_app, collab_client, shared_wiki, wiki_model, user_model
+    ):
+        _add_wiki_user(flask_app, shared_wiki, "collab.bsky.social", True)
+        with patch("app.platform_server._init_wiki_repo"):
+            collab_client.post(
+                "/app/create",
+                data={"slug": "collab-own", "display_name": "Collab Own"},
+                # Avoids the shared 1/minute /app/create limiter (the fixture used 127.0.0.1's budget).
+                environ_base={"REMOTE_ADDR": "10.0.0.2"},
+            )
+        assert wiki_model.get("collab-own") is not None
+        assert user_model.get("did:plc:collab")["wiki_count"] == 1
+
+        resp = collab_client.post(
+            "/app/account/delete",
+            data={"confirm_handle": "collab.bsky.social"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert user_model.get("did:plc:collab") is None
+        assert wiki_model.get("collab-own") is None
+        assert wiki_model.get("shared") is not None
+
+    def test_other_users_wiki_without_wiki_db_is_not_probed(
+        self, client, owner_token, owner_user, collab_user, wiki_model, tmp_path
+    ):
+        """Scanning other users' wikis must not create a wiki.db where none exists."""
+        ghost_dir = tmp_path / "ghost"
+        ghost_dir.mkdir()
+        wiki_model.create(
+            slug="ghost",
+            owner_did="did:plc:collab",
+            display_name="Ghost",
+            repo_path=str(ghost_dir / "repo"),
+            mcp_token_hash="e" * 64,
+        )
+        wiki_model.create(
+            slug="mine",
+            owner_did="did:plc:owner",
+            display_name="Mine",
+            repo_path="/tmp/fake/repo",
+            mcp_token_hash="f" * 64,
+        )
+        client.set_cookie("platform_token", owner_token, domain="localhost")
+
+        resp = client.get("/app/wiki/mine")
+        assert resp.status_code == 200
+        assert "Mine" in resp.data.decode()
+        assert not (ghost_dir / "wiki.db").exists()
+
+
 # --- Admin stats tests ---
 
 

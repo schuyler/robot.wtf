@@ -28,6 +28,8 @@ claude mcp add --transport http <wiki-name> <mcp-url> --header "Authorization: B
 
 Get the exact command — with your URL and token — from your [wiki dashboard](https://robot.wtf/app/) → MCP Setup.
 
+Or skip the token and sign in with OAuth: run `claude mcp add --transport http <wiki-name> <mcp-url>`, then `/mcp` in Claude Code to authenticate.
+
 ### Claude.ai
 
 Go to **[Settings → Connectors](https://claude.ai/settings/connectors)** in the Claude web console and add the MCP URL from your your [wiki dashboard](https://robot.wtf/app/). OAuth handles authentication automatically — no bearer token needed.

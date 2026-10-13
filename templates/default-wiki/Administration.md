@@ -28,7 +28,7 @@ By default, all three are set to **Approved** — your wiki is truly private, ac
 
 When someone accesses your wiki, they're assigned a role:
 
-- **Admin** — full access plus the admin panel
+- **Admin** — full access plus the admin panel. The wiki also appears on their [dashboard](https://robot.wtf/app/), with its MCP connection instructions; only the owner can rename, delete, or regenerate the MCP token.
 - **Editor** — can read, edit, and upload
 - **Viewer** — read only
 

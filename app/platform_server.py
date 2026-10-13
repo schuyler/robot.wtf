@@ -218,6 +218,31 @@ def _is_owner(wiki, user_did):
     return wiki is not None and wiki.get("owner_did") == user_did
 
 
+def _is_wiki_admin(wiki, handle):
+    """Return True if handle is an admin in the wiki's own user table."""
+    db_path = os.path.join(os.path.dirname(wiki["repo_path"]), "wiki.db")
+    if not os.path.exists(db_path):
+        return False
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            'SELECT is_admin FROM "user" WHERE email = ?', (f"@{handle}",)
+        ).fetchone()
+    finally:
+        conn.close()
+    return bool(row and row[0])
+
+
+def _managed_wikis(wiki_model, user):
+    """Owned wikis first, then wikis where the user is a per-wiki admin."""
+    owned = wiki_model.list_by_owner(user.user_did)
+    administered = [
+        w for w in wiki_model.list_all()
+        if w["owner_did"] != user.user_did and _is_wiki_admin(w, user.handle)
+    ]
+    return owned + administered
+
+
 # ---------------------------------------------------------------------------
 # Route registration functions
 # ---------------------------------------------------------------------------
@@ -745,7 +770,7 @@ def _register_management_ui_routes(app, limiter):
         if user is None:
             return {"sidebar_wikis": [], "platform_domain": PLATFORM_DOMAIN, "is_platform_admin": False}
         wiki_model = app.config["WIKI_MODEL"]
-        wikis = wiki_model.list_by_owner(user.user_did)
+        wikis = _managed_wikis(wiki_model, user)
         is_platform_admin = user.user_did in app.config.get("PLATFORM_ADMIN_DIDS", set())
         return {"sidebar_wikis": wikis, "platform_domain": PLATFORM_DOMAIN, "is_platform_admin": is_platform_admin}
 
@@ -758,7 +783,7 @@ def _register_management_ui_routes(app, limiter):
         user = result
 
         wiki_model = app.config["WIKI_MODEL"]
-        wikis = wiki_model.list_by_owner(user.user_did)
+        wikis = _managed_wikis(wiki_model, user)
 
         if wikis:
             return redirect(url_for("wiki_settings", slug=wikis[0]["slug"]))
@@ -872,7 +897,8 @@ def _register_management_ui_routes(app, limiter):
             flash("Wiki not found.", "danger")
             return redirect(url_for("dashboard"))
 
-        if not _is_owner(wiki, user.user_did):
+        is_owner = _is_owner(wiki, user.user_did)
+        if not (is_owner or _is_wiki_admin(wiki, user.handle)):
             flash("Access denied.", "danger")
             return redirect(url_for("dashboard"))
 
@@ -884,6 +910,7 @@ def _register_management_ui_routes(app, limiter):
             wiki=wiki,
             platform_domain=PLATFORM_DOMAIN,
             mcp_token=mcp_token,
+            is_owner=is_owner,
         )
 
     @app.route("/app/wiki/<slug>/settings", methods=["POST"])

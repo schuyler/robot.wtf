@@ -94,7 +94,7 @@ class WikiModel:
     def list_all(self) -> list[dict[str, Any]]:
         """Return all wikis ordered by creation date (newest first)."""
         rows = self._conn.execute(
-            "SELECT slug, owner_did, display_name, created_at, last_accessed"
+            "SELECT slug, owner_did, display_name, repo_path, created_at, last_accessed"
             " FROM wikis ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]

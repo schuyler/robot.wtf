@@ -1189,7 +1189,8 @@ class TestPlatformAdminStats:
         )
         mock_wm.count.return_value = 5
         mock_um.count.return_value = 3
-        mock_wm.list_all.side_effect = RuntimeError("DB error")
+        # First call is admin_stats; the second is the sidebar context processor.
+        mock_wm.list_all.side_effect = [RuntimeError("DB error"), []]
 
         mock_proc = MagicMock()
         mock_proc.stdout = "active\nactive\nactive\n"
