@@ -4,3 +4,26 @@ robot_services:
   - robot-platform
   - robot-mcp
 platform_admin_dids: "did:plc:6kwt7jo6rxoui6frgitlozwl"
+fastmcp_version: "{{ lookup('file', playbook_dir ~ '/../requirements.txt') | regex_search('^fastmcp==(\\S+)', '\\1', multiline=True) | first }}"
+
+# Packages installed from git, in install order. ref may be a branch, tag or
+# commit SHA. Deploy resolves it to a commit and reinstalls only when that
+# differs from the installed commit, so a no-op deploy restarts nothing.
+# To pin a component, set its ref to a tag or SHA.
+git_packages:
+  - name: otterwiki
+    url: https://github.com/schuyler/otterwiki.git
+    ref: wikibot-io
+    pip_args: --no-binary otterwiki
+  - name: otterwiki-api
+    url: https://github.com/schuyler/otterwiki-api.git
+    ref: main
+    pip_args: --no-deps
+  - name: otterwiki-semantic-search
+    url: https://github.com/schuyler/otterwiki-semantic-search.git
+    ref: main
+    pip_args: --no-deps
+  - name: otterwiki-mcp
+    url: https://github.com/schuyler/otterwiki-mcp.git
+    ref: main
+    pip_args: --no-deps
