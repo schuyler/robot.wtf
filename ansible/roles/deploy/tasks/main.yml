@@ -40,39 +40,48 @@
     requirements: /srv/app/src/requirements.txt
     virtualenv: /srv/app/venv
     virtualenv_python: python3
+  register: venv_requirements
+
+- name: Copy deploy package checks
+  ansible.builtin.copy:
+    src: deploy_packages.py
+    dest: /srv/app/deploy_packages.py
+    owner: root
+    group: root
+    mode: "0644"
 
 # requirements.txt holds the single fastmcp pin. fastmcp and fastmcp-slim share
 # site-packages/fastmcp/; an in-place upgrade from 3.x deletes slim's __init__.py.
+# Reinstall slim only when that could have happened or its files are missing.
+- name: Check fastmcp-slim is installed intact
+  ansible.builtin.command:
+    cmd: /srv/app/venv/bin/python /srv/app/deploy_packages.py check-dist fastmcp-slim {{ fastmcp_version }}
+  register: fastmcp_slim_check
+  changed_when: false
+  failed_when: fastmcp_slim_check.rc not in [0, 1]
+
 - name: Reinstall fastmcp-slim to restore fastmcp/__init__.py
   ansible.builtin.command:
     cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall fastmcp-slim=={{ fastmcp_version }}
-  vars:
-    fastmcp_version: "{{ lookup('file', playbook_dir ~ '/../requirements.txt') | regex_search('^fastmcp==(\\S+)', '\\1', multiline=True) | first }}"
-  changed_when: true
+  when: venv_requirements is changed or fastmcp_slim_check.rc != 0
   notify: restart robot services
 
-- name: Install otterwiki from wikibot-io fork
+- name: Resolve git package refs and installed commits
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-binary otterwiki --force-reinstall 'git+https://github.com/schuyler/otterwiki.git@wikibot-io'
-  changed_when: true
-  notify: restart robot services
+    cmd: /srv/app/venv/bin/python /srv/app/deploy_packages.py git-status
+    stdin: "{{ git_packages | to_json }}"
+  register: git_package_status
+  changed_when: false
 
-- name: Install otterwiki-api plugin
+# Installs the resolved commit, not the ref, so the installed version is exactly
+# the one compared against on the next deploy.
+- name: Install git packages whose commit changed
   ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall 'git+https://github.com/schuyler/otterwiki-api.git'
-  changed_when: true
-  notify: restart robot services
-
-- name: Install otterwiki-semantic-search plugin
-  ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall 'git+https://github.com/schuyler/otterwiki-semantic-search.git'
-  changed_when: true
-  notify: restart robot services
-
-- name: Install otterwiki-mcp plugin
-  ansible.builtin.command:
-    cmd: /srv/app/venv/bin/pip install --no-cache-dir --no-deps --force-reinstall 'git+https://github.com/schuyler/otterwiki-mcp.git'
-  changed_when: true
+    cmd: "/srv/app/venv/bin/pip install --no-cache-dir {{ item.pip_args }} --force-reinstall 'git+{{ item.url }}@{{ item.commit }}'"
+  loop: "{{ git_package_status.stdout | from_json }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.installed | default('none', true) | truncate(12, true, '') }} -> {{ item.commit | truncate(12, true, '') }}"
+  when: item.installed != item.commit
   notify: restart robot services
 
 - name: Install faiss-cpu
