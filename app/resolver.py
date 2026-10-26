@@ -507,9 +507,10 @@ def _disable_repo_symlinks(repo_path: str) -> None:
     core.symlinks=false, git writes the link target as an ordinary file instead.
 
     The setting is read first and only written when missing: reads take no
-    lock, and otterwiki rewrites this same config file (GitHttpServer.__init__)
-    on every tenant swap, so a write can transiently fail on config.lock.
-    Writes are retried a few times for that reason.
+    lock, and other workers can write this same config file at the same time
+    (otterwiki's GitHttpServer.__init__ sets receive.denyCurrentBranch the
+    first time it sees a repo), so a write can transiently fail on
+    config.lock. Writes are retried a few times for that reason.
 
     Raises subprocess.CalledProcessError if the setting still can't be
     written, so callers can refuse the push rather than proceed unprotected.
