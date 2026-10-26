@@ -177,6 +177,11 @@ class ManagementMiddleware:
         if path.startswith("/api/v1/"):
             return self._app(environ, start_response)
 
+        # /api/me is a Flask route authenticated by the platform_token cookie
+        # (platform_server.api_me); bearer auth here would always reject it.
+        if path == "/api/me":
+            return self._app(environ, start_response)
+
         method = environ.get("REQUEST_METHOD", "GET")
 
         # Rate limiting for /api/* routes

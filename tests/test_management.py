@@ -506,6 +506,13 @@ class TestPassthrough:
         middleware(environ, capture)
         middleware._app.assert_called()
 
+    def test_api_me_passes_through(self, middleware, owner_user):
+        """/api/me authenticates by cookie in Flask, not by bearer here."""
+        environ = _make_environ("GET", "/api/me")
+        capture = _ResponseCapture()
+        middleware(environ, capture)
+        middleware._app.assert_called()
+
     def test_non_api_passes_through(self, middleware, owner_user):
         """Non-/api paths should pass through to inner app."""
         environ = _make_environ("GET", "/some/other/path")
